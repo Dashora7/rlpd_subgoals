@@ -7,10 +7,11 @@ import d4rl.gym_mujoco
 import d4rl.locomotion
 import dmcgym
 import gym
+from nitish_env import NitishEnv
 import numpy as np
 import tqdm
 from absl import app, flags
-
+from flax.core.frozen_dict import unfreeze
 try:
     from flax.training import checkpoints
 except:
@@ -83,7 +84,7 @@ def combine(one_dict, other_dict):
 def main(_):
     assert FLAGS.offline_ratio >= 0.0 and FLAGS.offline_ratio <= 1.0
 
-    wandb.init(project=FLAGS.project_name)
+    wandb.init(project=FLAGS.project_name, entity='dashora7')
     wandb.config.update(FLAGS)
 
     exp_prefix = f"s{FLAGS.seed}_{FLAGS.pretrain_steps}pretrain"
@@ -99,8 +100,11 @@ def main(_):
     if FLAGS.checkpoint_buffer:
         buffer_dir = os.path.join(log_dir, "buffers")
         os.makedirs(buffer_dir, exist_ok=True)
-
-    env = gym.make(FLAGS.env_name)
+    
+    if FLAGS.env_name == 'nitish-custom-antmaze-umaze-v4':
+        env = NitishEnv()
+    else:
+        env = gym.make(FLAGS.env_name)
     env = wrap_gym(env, rescale_actions=True)
     env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=1)
     env.seed(FLAGS.seed)
@@ -183,11 +187,14 @@ def main(_):
             online_batch = replay_buffer.sample(
                 int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
             )
-            offline_batch = ds.sample(
-                int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio)
-            )
+            if FLAGS.offline_ratio > 0.0:
+                offline_batch = ds.sample(
+                    int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio)
+                )
 
-            batch = combine(offline_batch, online_batch)
+                batch = combine(offline_batch, online_batch)
+            else:
+                batch = unfreeze(online_batch)
 
             if "antmaze" in FLAGS.env_name:
                 batch["rewards"] -= 1
