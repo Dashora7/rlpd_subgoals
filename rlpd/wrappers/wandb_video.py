@@ -11,17 +11,23 @@ class WANDBVideo(gym.Wrapper):
         self,
         env: gym.Env,
         name: str = "video",
-        pixel_hw: int = 84,
+        pixel_hw: int = 200, # 84
         render_kwargs={},
         max_videos: Optional[int] = None,
+        nitish_env=False,
+        nitish_type=None
     ):
         super().__init__(env)
-
+        assert not nitish_env or nitish_type is not None, "Need to provide nitish_type if using nitish env!"
+        assert nitish_type in ['small', 'medium', 'large'], "Nitish type must be small, medium, or large!"
         self._name = name
+        self._nitish_env = nitish_env
+        self._nitish_type = nitish_type
         self._pixel_hw = pixel_hw
         self._render_kwargs = render_kwargs
         self._max_videos = max_videos
         self._video = []
+        
 
     def _add_frame(self, obs):
         if self._max_videos is not None and self._max_videos <= 0:
@@ -32,6 +38,29 @@ class WANDBVideo(gym.Wrapper):
             else:
                 self._video.append(obs["pixels"])
         else:
+            if self._nitish_env:
+                try:
+                    if self._nitish_type == 'small':
+                        self.env.viewer.cam.lookat[0] = 4
+                        self.env.viewer.cam.lookat[1] = 4
+                        self.env.viewer.cam.distance = 20
+                    elif self._nitish_type == 'medium':
+                        self.env.viewer.cam.lookat[0] = 10
+                        self.env.viewer.cam.lookat[1] = 10
+                        self.env.viewer.cam.distance = 40
+                    elif self._nitish_type == 'large':
+                        self.env.viewer.cam.lookat[0] = 20
+                        self.env.viewer.cam.lookat[1] = 20
+                        self.env.viewer.cam.distance = 70
+                        
+                        
+                    self.env.viewer.add_marker(
+                        pos=np.array([self.subgoal[0], self.subgoal[1], 0.5]),
+                        type=2, size=np.array([0.75, 0.75, 0.75]), label="",
+                        rgba=np.array([1.0, 0.0, 0.0, 1.0]))
+                except:
+                    pass
+                
             self._video.append(
                 self.render(
                     height=self._pixel_hw,
@@ -40,6 +69,8 @@ class WANDBVideo(gym.Wrapper):
                     **self._render_kwargs
                 )
             )
+            if self._nitish_env:
+                self.env.viewer._markers.clear()
 
     def reset(self, **kwargs):
         self._video.clear()

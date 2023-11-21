@@ -7,10 +7,12 @@ import d4rl.gym_mujoco
 import d4rl.locomotion
 import dmcgym
 import gym
+from nitish_env import NitishEnv
+from d4rl.locomotion import wrappers
 import numpy as np
 import tqdm
 from absl import app, flags
-
+from flax.core.frozen_dict import unfreeze
 try:
     from flax.training import checkpoints
 except:
@@ -54,7 +56,7 @@ flags.DEFINE_integer("utd_ratio", 1, "Update to data ratio.")
 flags.DEFINE_boolean(
     "binary_include_bc", True, "Whether to include BC data in the binary datasets."
 )
-
+flags.DEFINE_string("icvf_path", None, "Logging directory.")
 config_flags.DEFINE_config_file(
     "config",
     "configs/sac_config.py",
@@ -83,7 +85,7 @@ def combine(one_dict, other_dict):
 def main(_):
     assert FLAGS.offline_ratio >= 0.0 and FLAGS.offline_ratio <= 1.0
 
-    wandb.init(project=FLAGS.project_name)
+    wandb.init(project=FLAGS.project_name, entity='dashora7')
     wandb.config.update(FLAGS)
 
     exp_prefix = f"s{FLAGS.seed}_{FLAGS.pretrain_steps}pretrain"
@@ -99,8 +101,11 @@ def main(_):
     if FLAGS.checkpoint_buffer:
         buffer_dir = os.path.join(log_dir, "buffers")
         os.makedirs(buffer_dir, exist_ok=True)
-
-    env = gym.make(FLAGS.env_name)
+    
+    if FLAGS.env_name == 'nitish-custom-antmaze':
+        env = wrappers.NormalizedBoxEnv(gym.make('nitish-v0', subgoal_dense=True, icvf_path=FLAGS.icvf_path)) # NitishEnv()
+    else:
+        env = gym.make(FLAGS.env_name)
     env = wrap_gym(env, rescale_actions=True)
     env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=1)
     env.seed(FLAGS.seed)
@@ -109,8 +114,11 @@ def main(_):
         ds = BinaryDataset(env, include_bc_data=FLAGS.binary_include_bc)
     else:
         ds = D4RLDataset(env)
-
-    eval_env = gym.make(FLAGS.env_name)
+    
+    if FLAGS.env_name == 'nitish-custom-antmaze':
+        eval_env = wrappers.NormalizedBoxEnv(gym.make('nitish-v0', subgoal_dense=True, icvf_path=FLAGS.icvf_path)) # NitishEnv()
+    else:
+        eval_env = gym.make(FLAGS.env_name)
     eval_env = wrap_gym(eval_env, rescale_actions=True)
     eval_env.seed(FLAGS.seed + 42)
 
@@ -155,12 +163,10 @@ def main(_):
         else:
             action, agent = agent.sample_actions(observation)
         next_observation, reward, done, info = env.step(action)
-
         if not done or "TimeLimit.truncated" in info:
             mask = 1.0
         else:
             mask = 0.0
-
         replay_buffer.insert(
             dict(
                 observations=observation,
@@ -183,11 +189,14 @@ def main(_):
             online_batch = replay_buffer.sample(
                 int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
             )
-            offline_batch = ds.sample(
-                int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio)
-            )
+            if FLAGS.offline_ratio > 0.0:
+                offline_batch = ds.sample(
+                    int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio)
+                )
 
-            batch = combine(offline_batch, online_batch)
+                batch = combine(offline_batch, online_batch)
+            else:
+                batch = unfreeze(online_batch)
 
             if "antmaze" in FLAGS.env_name:
                 batch["rewards"] -= 1
@@ -223,7 +232,6 @@ def main(_):
                         pickle.dump(replay_buffer, f, pickle.HIGHEST_PROTOCOL)
                 except:
                     print("Could not save agent buffer.")
-
 
 if __name__ == "__main__":
     app.run(main)

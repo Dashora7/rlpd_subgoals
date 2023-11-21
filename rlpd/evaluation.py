@@ -10,7 +10,7 @@ def evaluate(
     agent, env: gym.Env, num_episodes: int, save_video: bool = False
 ) -> Dict[str, float]:
     if save_video:
-        env = WANDBVideo(env, name="eval_video", max_videos=1)
+        env = WANDBVideo(env, name="eval_video", max_videos=1, nitish_env=True, nitish_type='medium')
     env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=num_episodes)
 
     for i in range(num_episodes):
