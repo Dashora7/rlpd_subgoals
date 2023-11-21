@@ -4,20 +4,26 @@ import numpy as np
 import gym
 import pickle
 from src import icvf_learner as learner
-from src.icvf_networks import icvfs, create_icvf
+from src.icvf_networks import icvfs, create_icvf, LayerNormMLP
+from src.subgoal_diffuser import GCDDPMBCAgent
 from flax.serialization import from_state_dict
 ENV_TYPE = 'medium' # medium, large, small
 from subgoals import SUBGOALS
 SUBGOALS = SUBGOALS[ENV_TYPE]
 import jax
+import jax.numpy as jnp
+from subgoal_gen_tools import select_subgoal
+obs_to_robot = lambda obs: obs[:2]
 
 class NitishEnv(AntMazeEnv):
     def __init__(self, subgoal_reward=0.2, value_sg_rew=True, value_sg_reach=True,
                  icvf_norm=True, icvf_path=None, eps=0.5, subgoal_bonus=0.0, normalize=False,
-                 goal_sample_freq=10, reward_clip=100.0, only_forward=True, **kwargs_dict):
+                 goal_sample_freq=10, reward_clip=100.0, only_forward=True, 
+                 subgoal_gen=False, diffusion_path=None, **kwargs_dict):
         self.subgoal = np.array([-10, -10])
         self.subgoals = SUBGOALS.copy()
         self.subgoal_dist_factor = -1
+        self.subgoal_gen = subgoal_gen
         self.subgoal_bonus = subgoal_bonus
         self.reward_clipper = lambda x: np.clip(x, -reward_clip, reward_clip)
         self.icvf_norm = icvf_norm
@@ -42,7 +48,7 @@ class NitishEnv(AntMazeEnv):
                 seed=42, observations=np.ones((1, 29)),
                 value_def=value_def, **conf)
             agent = from_state_dict(agent, params)
-            
+            self.icvf_fn = jax.jit(lambda a, b, c: agent.value(a, b, c).sum(0))
             def icvf_repr_fn(obs):
                 return agent.value(obs, method='get_phi')
             def icvf_value_fn(obs, goal):
@@ -61,7 +67,31 @@ class NitishEnv(AntMazeEnv):
         self.eps = eps
         self.state = None
         self.subgoal_reward = subgoal_reward
-        self.subgoal = SUBGOALS[1] # start at 0 + 1
+        
+        if self.subgoal_gen:
+            assert self.icvf_norm, "Need to use ICVF for subgoal generation!"
+            assert diffusion_path is not None, "Need to provide path to DDPM model!" 
+            with open(diffusion_path, 'rb') as f:
+                diff_params = pickle.load(f)
+            params = diff_params['agent']
+            conf = diff_params['config']
+            encoder_def = LayerNormMLP((256, 256))
+            rng = jax.random.PRNGKey(42)
+            rng, construct_rng = jax.random.split(rng)
+            d_agent = GCDDPMBCAgent.create(
+                rng=construct_rng,
+                observations=jnp.ones((1, 29)),
+                goals=jnp.ones((1, 29)),
+                actions=jnp.ones((1, 29)),
+                encoder_def=encoder_def,
+                conditional=True
+            )
+            d_agent = from_state_dict(d_agent, params)
+            self.sample_and_select_subgoal = jax.jit(
+                lambda obs, goal: select_subgoal(d_agent, self.icvf_fn, obs, goal, n=100, t=1)
+            )
+        else:
+            self.subgoal = self.subgoals[1] # start at 0 + 1
         
         super().__init__(max_episode_steps=timeouts[ENV_TYPE], **kwargs_dict)
         
@@ -76,22 +106,36 @@ class NitishEnv(AntMazeEnv):
             self.last_state = obs # account for first step
         
         ### ASSIGN SUBGOALS AND GIVE BONUS FOR REACHING
-        # TODO: ensure the order is right for assignment vs computation
         if self.stepnum % self.goal_sample_freq == 0:
-            if self.value_sg_reach:
-                idx = np.argmin([self.value_fn(self.state, sg) for sg in self.subgoals])
-                self.subgoal_dist_factor = np.array(self.value_fn(
-                    self.subgoals[idx],
-                    self.subgoals[min(idx + 1, len(self.subgoals) - 1)])).item()
+            if self.subgoal_gen:
+                
+                self.subgoal = self.sample_and_select_subgoal(self.state, self.subgoals[-1])
+                
+                if self.value_sg_reach:
+                    self.subgoal_dist_factor = np.array(self.value_fn(
+                        self.subgoal,
+                        self.subgoals[-1])).item()
+                else:
+                    self.subgoal_dist_factor = np.array(self.repr_dist(
+                        self.subgoal,
+                        self.subgoals[-1])).item()
+                    
             else:
-                idx = np.argmin([self.repr_dist(self.state, sg) for sg in self.subgoals])
-                self.subgoal_dist_factor = np.array(self.repr_dist(
-                    self.subgoals[idx],
-                    self.subgoals[min(idx + 1, len(self.subgoals) - 1)])).item()
-            self.subgoal = self.subgoals[min(idx + 1, len(self.subgoals) - 1)]
-            
-            if self.only_forward:
-                self.subgoals = self.subgoals[idx:]
+                
+                if self.value_sg_reach:
+                    idx = np.argmin([self.value_fn(self.state, sg) for sg in self.subgoals])
+                    self.subgoal_dist_factor = np.array(self.value_fn(
+                        self.subgoals[idx],
+                        self.subgoals[min(idx + 1, len(self.subgoals) - 1)])).item()
+                else:
+                    idx = np.argmin([self.repr_dist(self.state, sg) for sg in self.subgoals])
+                    self.subgoal_dist_factor = np.array(self.repr_dist(
+                        self.subgoals[idx],
+                        self.subgoals[min(idx + 1, len(self.subgoals) - 1)])).item()
+                self.subgoal = self.subgoals[min(idx + 1, len(self.subgoals) - 1)]
+                
+                if self.only_forward:
+                    self.subgoals = self.subgoals[idx:]
         
         if self.value_fn(self.state, self.subgoal) <= self.eps:
             reward += self.subgoal_bonus
@@ -140,7 +184,6 @@ kwargs_dict = {
     'ref_max_score': 1.0,
     'v2_resets': True
 }
-obs_to_robot = lambda obs: obs[:2]
 gym.envs.register(
      id='nitish-v0',
      entry_point='nitish_env:NitishEnv',

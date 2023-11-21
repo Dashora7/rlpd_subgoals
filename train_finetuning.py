@@ -56,7 +56,8 @@ flags.DEFINE_integer("utd_ratio", 1, "Update to data ratio.")
 flags.DEFINE_boolean(
     "binary_include_bc", True, "Whether to include BC data in the binary datasets."
 )
-flags.DEFINE_string("icvf_path", None, "Logging directory.")
+flags.DEFINE_string("icvf_path", None, "model path.")
+flags.DEFINE_string("diffusion_path", None, "model path.")
 config_flags.DEFINE_config_file(
     "config",
     "configs/sac_config.py",
@@ -103,7 +104,9 @@ def main(_):
         os.makedirs(buffer_dir, exist_ok=True)
     
     if FLAGS.env_name == 'nitish-custom-antmaze':
-        env = wrappers.NormalizedBoxEnv(gym.make('nitish-v0', subgoal_dense=True, icvf_path=FLAGS.icvf_path)) # NitishEnv()
+        env = wrappers.NormalizedBoxEnv(gym.make(
+            'nitish-v0', subgoal_dense=True, icvf_path=FLAGS.icvf_path,
+            diffusion_path=FLAGS.diffusion_path)) # NitishEnv()
     else:
         env = gym.make(FLAGS.env_name)
     env = wrap_gym(env, rescale_actions=True)
@@ -116,7 +119,9 @@ def main(_):
         ds = D4RLDataset(env)
     
     if FLAGS.env_name == 'nitish-custom-antmaze':
-        eval_env = wrappers.NormalizedBoxEnv(gym.make('nitish-v0', subgoal_dense=True, icvf_path=FLAGS.icvf_path)) # NitishEnv()
+        eval_env = wrappers.NormalizedBoxEnv(gym.make(
+            'nitish-v0', subgoal_dense=True, icvf_path=FLAGS.icvf_path,
+            diffusion_path=FLAGS.diffusion_path)) # NitishEnv()
     else:
         eval_env = gym.make(FLAGS.env_name)
     eval_env = wrap_gym(eval_env, rescale_actions=True)
