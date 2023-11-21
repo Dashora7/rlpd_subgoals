@@ -140,7 +140,6 @@ kwargs_dict = {
     'ref_max_score': 1.0,
     'v2_resets': True
 }
-
 obs_to_robot = lambda obs: obs[:2]
 gym.envs.register(
      id='nitish-v0',
