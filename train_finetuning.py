@@ -112,11 +112,6 @@ def main(_):
     env = wrap_gym(env, rescale_actions=True)
     env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=1)
     env.seed(FLAGS.seed)
-    # not ideal, but works for now:
-    if "binary" in FLAGS.env_name:
-        ds = BinaryDataset(env, include_bc_data=FLAGS.binary_include_bc)
-    else:
-        ds = D4RLDataset(env)
     
     if FLAGS.env_name == 'nitish-custom-antmaze':
         eval_env = wrappers.NormalizedBoxEnv(gym.make(
@@ -137,27 +132,6 @@ def main(_):
         env.observation_space, env.action_space, FLAGS.max_steps
     )
     replay_buffer.seed(FLAGS.seed)
-
-    for i in tqdm.tqdm(
-        range(0, FLAGS.pretrain_steps), smoothing=0.1, disable=not FLAGS.tqdm
-    ):
-        offline_batch = ds.sample(FLAGS.batch_size * FLAGS.utd_ratio)
-        batch = {}
-        for k, v in offline_batch.items():
-            batch[k] = v
-            if "antmaze" in FLAGS.env_name and k == "rewards":
-                batch[k] -= 1
-
-        agent, update_info = agent.update(batch, FLAGS.utd_ratio)
-
-        if i % FLAGS.log_interval == 0:
-            for k, v in update_info.items():
-                wandb.log({f"offline-training/{k}": v}, step=i)
-
-        if i % FLAGS.eval_interval == 0:
-            eval_info = evaluate(agent, eval_env, num_episodes=FLAGS.eval_episodes)
-            for k, v in eval_info.items():
-                wandb.log({f"offline-evaluation/{k}": v}, step=i)
 
     observation, done = env.reset(), False
     for i in tqdm.tqdm(
@@ -194,14 +168,7 @@ def main(_):
             online_batch = replay_buffer.sample(
                 int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
             )
-            if FLAGS.offline_ratio > 0.0:
-                offline_batch = ds.sample(
-                    int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio)
-                )
-
-                batch = combine(offline_batch, online_batch)
-            else:
-                batch = unfreeze(online_batch)
+            batch = unfreeze(online_batch)
 
             if "antmaze" in FLAGS.env_name:
                 batch["rewards"] -= 1

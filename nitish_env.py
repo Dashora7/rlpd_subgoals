@@ -7,24 +7,28 @@ from src import icvf_learner as learner
 from src.icvf_networks import icvfs, create_icvf, LayerNormMLP
 from src.subgoal_diffuser import GCDDPMBCAgent
 from flax.serialization import from_state_dict
-ENV_TYPE = 'medium' # medium, large, small
+ENV_TYPE = 'large' # medium, large, small
 from subgoals import SUBGOALS
 SUBGOALS = SUBGOALS[ENV_TYPE]
 import jax
 import jax.numpy as jnp
+import time
 from subgoal_gen_tools import select_subgoal
 obs_to_robot = lambda obs: obs[:2]
 
 class NitishEnv(AntMazeEnv):
-    def __init__(self, subgoal_reward=0.2, value_sg_rew=True, value_sg_reach=True,
+    def __init__(self, subgoal_reward=0.25, value_sg_rew=True, value_sg_reach=True,
                  icvf_norm=True, icvf_path=None, eps=0.5, subgoal_bonus=0.0, normalize=False,
-                 goal_sample_freq=10, reward_clip=100.0, only_forward=True, 
-                 subgoal_gen=False, diffusion_path=None, **kwargs_dict):
-        self.subgoal = np.array([-10, -10])
+                 goal_sample_freq=1, reward_clip=100.0, only_forward=True, goal_caching=True,
+                 subgoal_gen=True, diffusion_path=None, sg_cond=False, sample_when_reached=True,
+                 **kwargs_dict):
+        self.sg_cond = sg_cond
         self.subgoals = SUBGOALS.copy()
+        self.sample_when_reached = sample_when_reached
         self.subgoal_dist_factor = -1
         self.subgoal_gen = subgoal_gen
         self.subgoal_bonus = subgoal_bonus
+        self.sg_indx = 0
         self.reward_clipper = lambda x: np.clip(x, -reward_clip, reward_clip)
         self.icvf_norm = icvf_norm
         self.only_forward = only_forward
@@ -32,10 +36,14 @@ class NitishEnv(AntMazeEnv):
         self.goal_sample_freq = goal_sample_freq
         self.value_sg_rew = value_sg_rew
         self.value_sg_reach = value_sg_reach
+        self.subgoal_caching = goal_caching
+        self.sg_cache = []
         self.stepnum = 0
         assert not self.value_sg_rew or self.icvf_norm, "Need to use ICVF for value reward!"
         assert not self.value_sg_reach or self.icvf_norm, "Need to use ICVF for value reward!"
-        
+        assert not self.subgoal_caching or self.subgoal_gen, "Need to use subgoal generation for caching!"
+        assert not self.subgoal_caching or not self.sg_cond, "Caching only makes sense for an unconditioned case."
+        assert not self.subgoal_caching or self.sample_when_reached, "Caching only makes sense if sampling when reached."
         if self.icvf_norm:
             assert icvf_path is not None, "Need to provide path to ICVF model!"    
             with open(icvf_path, 'rb') as f:
@@ -90,6 +98,7 @@ class NitishEnv(AntMazeEnv):
             self.sample_and_select_subgoal = jax.jit(
                 lambda obs, goal: select_subgoal(d_agent, self.icvf_fn, obs, goal, n=100, t=1)
             )
+            self.subgoal = self.sample_and_select_subgoal(self.subgoals[0], self.subgoals[-1])
         else:
             self.subgoal = self.subgoals[1] # start at 0 + 1
         
@@ -97,49 +106,19 @@ class NitishEnv(AntMazeEnv):
         
 
     def step(self, action):
-        
+        t = time.time()
         self.last_state = self.state
         obs, reward, done, info = super().step(action)
         self.state = obs
+        parent_step_time = time.time() - t
         
         if self.last_state is None:
             self.last_state = obs # account for first step
         
-        ### ASSIGN SUBGOALS AND GIVE BONUS FOR REACHING
-        if self.stepnum % self.goal_sample_freq == 0:
-            if self.subgoal_gen:
-                
-                self.subgoal = self.sample_and_select_subgoal(self.state, self.subgoals[-1])
-                
-                if self.value_sg_reach:
-                    self.subgoal_dist_factor = np.array(self.value_fn(
-                        self.subgoal,
-                        self.subgoals[-1])).item()
-                else:
-                    self.subgoal_dist_factor = np.array(self.repr_dist(
-                        self.subgoal,
-                        self.subgoals[-1])).item()
-                    
-            else:
-                
-                if self.value_sg_reach:
-                    idx = np.argmin([self.value_fn(self.state, sg) for sg in self.subgoals])
-                    self.subgoal_dist_factor = np.array(self.value_fn(
-                        self.subgoals[idx],
-                        self.subgoals[min(idx + 1, len(self.subgoals) - 1)])).item()
-                else:
-                    idx = np.argmin([self.repr_dist(self.state, sg) for sg in self.subgoals])
-                    self.subgoal_dist_factor = np.array(self.repr_dist(
-                        self.subgoals[idx],
-                        self.subgoals[min(idx + 1, len(self.subgoals) - 1)])).item()
-                self.subgoal = self.subgoals[min(idx + 1, len(self.subgoals) - 1)]
-                
-                if self.only_forward:
-                    self.subgoals = self.subgoals[idx:]
-        
         if self.value_fn(self.state, self.subgoal) <= self.eps:
             reward += self.subgoal_bonus
         
+        t = time.time()
         ### ASSIGN PROGRESS REWARD
         if self.value_sg_rew:
             val_to_sg = self.value_fn(self.state, self.subgoal) # negative value
@@ -154,15 +133,73 @@ class NitishEnv(AntMazeEnv):
             factor = (1 / self.subgoal_dist_factor) if self.normalize else 1
             reward -= self.reward_clipper(self.subgoal_reward * norm_diff) * factor
         self.stepnum += 1
+        reward_assignment_time = time.time() - t
+        
+        
+        ### ASSIGN SUBGOALS AND GIVE BONUS FOR REACHING
+        if self.stepnum % self.goal_sample_freq == 0:
+            
+            self.goal_init()
+        
+        if self.sg_cond:
+            obs = np.concatenate([obs, self.subgoal[:2]])
+        
         return obs, reward, done, info
 
     def reset(self):
         obs = super().reset()
+        self.sg_indx = 0
         self.state = obs
         self.stepnum = 0
         self.last_state = obs
         self.subgoals = SUBGOALS.copy()
+        self.goal_init(True)
+        if self.sg_cond:
+            obs = np.concatenate([obs, self.subgoal[:2]])
         return obs
+    
+    def check_cache_contents(self, new_subgoal):
+        for sg in self.sg_cache:
+            if self.value_fn(sg, new_subgoal) <= self.eps:
+                return True
+        return False
+        
+
+    def goal_init(self, reset=False):
+        if self.subgoal_gen:
+            
+            if not self.sample_when_reached or self.value_fn(self.state, self.subgoal) <= self.eps or reset:
+                if self.subgoal_caching and self.sg_indx < len(self.sg_cache):
+                    self.subgoal = self.sg_cache[self.sg_indx]
+                    self.sg_indx += 1
+                else:
+                    if self.subgoal_caching and self.check_cache_contents(self.subgoal):
+                        self.sg_cache.append(self.subgoal)
+                    self.subgoal = self.sample_and_select_subgoal(self.state, self.subgoals[-1])
+            
+            if self.value_sg_reach:
+                self.subgoal_dist_factor = np.array(self.value_fn(
+                    self.subgoal,
+                    self.subgoals[-1])).item()
+            else:
+                self.subgoal_dist_factor = np.array(self.repr_dist(
+                    self.subgoal,
+                    self.subgoals[-1])).item()
+        else:
+            if self.value_sg_reach:
+                idx = np.argmin([self.value_fn(self.state, sg) for sg in self.subgoals])
+                self.subgoal_dist_factor = np.array(self.value_fn(
+                    self.subgoals[idx],
+                    self.subgoals[min(idx + 1, len(self.subgoals) - 1)])).item()
+            else:
+                idx = np.argmin([self.repr_dist(self.state, sg) for sg in self.subgoals])
+                self.subgoal_dist_factor = np.array(self.repr_dist(
+                    self.subgoals[idx],
+                    self.subgoals[min(idx + 1, len(self.subgoals) - 1)])).item()
+            if not self.sample_when_reached or self.value_fn(self.state, self.subgoal) <= self.eps:
+                self.subgoal = self.subgoals[min(idx + 1, len(self.subgoals) - 1)]
+            if self.only_forward:
+                self.subgoals = self.subgoals[idx:]
 
 
 mmaps = {'small': maze_env.U_MAZE_TEST, 'medium': maze_env.BIG_MAZE_TEST, 'large': maze_env.HARDEST_MAZE_TEST}
