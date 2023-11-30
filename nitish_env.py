@@ -19,8 +19,8 @@ obs_to_robot = lambda obs: obs[:2]
 class NitishEnv(AntMazeEnv):
     def __init__(self, subgoal_reward=0.25, value_sg_rew=False, value_sg_reach=False,
                  icvf_norm=False, icvf_path=None, eps=0.5, subgoal_bonus=0.0, normalize=False,
-                 goal_sample_freq=20, reward_clip=100.0, only_forward=True, goal_caching=True,
-                 subgoal_gen=True, diffusion_path=None, sg_cond=False, sample_when_reached=True,
+                 goal_sample_freq=20, reward_clip=100.0, only_forward=True, goal_caching=False,
+                 subgoal_gen=True, diffusion_path=None, sg_cond=True, sample_when_reached=True,
                  **kwargs_dict):
         self.sg_cond = sg_cond
         self.subgoals = SUBGOALS.copy()
@@ -45,6 +45,7 @@ class NitishEnv(AntMazeEnv):
         assert not self.subgoal_caching or self.subgoal_gen, "Need to use subgoal generation for caching!"
         assert not self.subgoal_caching or not self.sg_cond, "Caching only makes sense for an unconditioned case."
         assert not self.subgoal_caching or self.sample_when_reached, "Caching only makes sense if sampling when reached."
+        
         if icvf_path is not None:   
             with open(icvf_path, 'rb') as f:
                 icvf_params = pickle.load(f) 
@@ -107,19 +108,16 @@ class NitishEnv(AntMazeEnv):
         
 
     def step(self, action):
-        t = time.time()
         self.last_state = self.state
         obs, reward, done, info = super().step(action)
         self.state = obs
-        parent_step_time = time.time() - t
         
         if self.last_state is None:
             self.last_state = obs # account for first step
         
-        if self.value_fn(self.state, self.subgoal) <= self.eps:
+        if self.subgoal_bonus > 0 and self.repr_dist(self.state, self.subgoal) <= self.eps:
             reward += self.subgoal_bonus
         
-        t = time.time()
         ### ASSIGN PROGRESS REWARD
         if self.value_sg_rew:
             val_to_sg = self.value_fn(self.state, self.subgoal) # negative value
@@ -134,12 +132,9 @@ class NitishEnv(AntMazeEnv):
             factor = (1 / self.subgoal_dist_factor) if self.normalize else 1
             reward -= self.reward_clipper(self.subgoal_reward * norm_diff) * factor
         self.stepnum += 1
-        reward_assignment_time = time.time() - t
-        
         
         ### ASSIGN SUBGOALS AND GIVE BONUS FOR REACHING
         if self.stepnum % self.goal_sample_freq == 0:
-            
             self.goal_init()
         
         if self.sg_cond:
@@ -164,12 +159,10 @@ class NitishEnv(AntMazeEnv):
             if self.value_fn(sg, new_subgoal) <= self.eps:
                 return True
         return False
-        
 
     def goal_init(self, reset=False):
         if self.subgoal_gen:
-            
-            if not self.sample_when_reached or self.value_fn(self.state, self.subgoal) <= self.eps or reset:
+            if not self.sample_when_reached or self.repr_dist(self.state, self.subgoal) <= self.eps or reset:
                 if self.subgoal_caching and self.sg_indx < len(self.sg_cache):
                     self.subgoal = self.sg_cache[self.sg_indx]
                     self.sg_indx += 1
