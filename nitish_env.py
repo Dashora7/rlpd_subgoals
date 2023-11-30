@@ -17,9 +17,9 @@ from subgoal_gen_tools import select_subgoal
 obs_to_robot = lambda obs: obs[:2]
 
 class NitishEnv(AntMazeEnv):
-    def __init__(self, subgoal_reward=0.25, value_sg_rew=True, value_sg_reach=True,
-                 icvf_norm=True, icvf_path=None, eps=0.5, subgoal_bonus=0.0, normalize=False,
-                 goal_sample_freq=1, reward_clip=100.0, only_forward=True, goal_caching=True,
+    def __init__(self, subgoal_reward=0.25, value_sg_rew=False, value_sg_reach=False,
+                 icvf_norm=False, icvf_path=None, eps=0.5, subgoal_bonus=0.0, normalize=False,
+                 goal_sample_freq=20, reward_clip=100.0, only_forward=True, goal_caching=True,
                  subgoal_gen=True, diffusion_path=None, sg_cond=False, sample_when_reached=True,
                  **kwargs_dict):
         self.sg_cond = sg_cond
@@ -39,16 +39,15 @@ class NitishEnv(AntMazeEnv):
         self.subgoal_caching = goal_caching
         self.sg_cache = []
         self.stepnum = 0
+        assert not self.icvf_norm or icvf_path is not None, "Need to provide path to ICVF model!" 
         assert not self.value_sg_rew or self.icvf_norm, "Need to use ICVF for value reward!"
         assert not self.value_sg_reach or self.icvf_norm, "Need to use ICVF for value reward!"
         assert not self.subgoal_caching or self.subgoal_gen, "Need to use subgoal generation for caching!"
         assert not self.subgoal_caching or not self.sg_cond, "Caching only makes sense for an unconditioned case."
         assert not self.subgoal_caching or self.sample_when_reached, "Caching only makes sense if sampling when reached."
-        if self.icvf_norm:
-            assert icvf_path is not None, "Need to provide path to ICVF model!"    
+        if icvf_path is not None:   
             with open(icvf_path, 'rb') as f:
-                icvf_params = pickle.load(f)
-            
+                icvf_params = pickle.load(f) 
             params = icvf_params['agent']
             conf = icvf_params['config']
             value_def = create_icvf('multilinear', hidden_dims=[256, 256])
@@ -64,8 +63,10 @@ class NitishEnv(AntMazeEnv):
                 goal = goal.reshape(1, -1)
                 return -1 * agent.value(obs, goal, goal).mean()
             
-            self.state_repr_func = jax.jit(icvf_repr_fn)
             self.value_fn = jax.jit(icvf_value_fn)
+        
+        if self.icvf_norm:
+            self.state_repr_func = jax.jit(icvf_repr_fn)
         else:
             self.state_repr_func = obs_to_robot # gets x/y position from state
             
@@ -77,7 +78,7 @@ class NitishEnv(AntMazeEnv):
         self.subgoal_reward = subgoal_reward
         
         if self.subgoal_gen:
-            assert self.icvf_norm, "Need to use ICVF for subgoal generation!"
+            assert icvf_path is not None, "Need to use path to ICVF model for diffusion selection!"
             assert diffusion_path is not None, "Need to provide path to DDPM model!" 
             with open(diffusion_path, 'rb') as f:
                 diff_params = pickle.load(f)
