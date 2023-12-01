@@ -19,7 +19,7 @@ obs_to_robot = lambda obs: obs[:2]
 class NitishEnv(AntMazeEnv):
     def __init__(self, subgoal_reward=0.25, value_sg_rew=False, value_sg_reach=False,
                  icvf_norm=False, icvf_path=None, eps=0.5, subgoal_bonus=0.0, normalize=False,
-                 goal_sample_freq=20, reward_clip=100.0, only_forward=True, goal_caching=False,
+                 goal_sample_freq=1, reward_clip=100.0, only_forward=True, goal_caching=False,
                  subgoal_gen=True, diffusion_path=None, sg_cond=True, sample_when_reached=True,
                  **kwargs_dict):
         self.sg_cond = sg_cond
@@ -144,6 +144,11 @@ class NitishEnv(AntMazeEnv):
 
     def reset(self):
         obs = super().reset()
+
+        if self.subgoal_caching:
+            if len(self.sg_cache) > 0:
+                print('CACHE positions', [sg[:2] for sg in self.sg_cache])
+                
         self.sg_indx = 0
         self.state = obs
         self.stepnum = 0
@@ -156,20 +161,23 @@ class NitishEnv(AntMazeEnv):
     
     def check_cache_contents(self, new_subgoal):
         for sg in self.sg_cache:
-            if self.value_fn(sg, new_subgoal) <= self.eps:
-                return True
-        return False
+            if self.repr_dist(sg, new_subgoal) <= self.eps:
+                return False
+        return True
 
-    def goal_init(self, reset=False):
+    def goal_init(self, reset=False): 
         if self.subgoal_gen:
-            if not self.sample_when_reached or self.repr_dist(self.state, self.subgoal) <= self.eps or reset:
+            r = self.repr_dist(self.state, self.subgoal) <= self.eps
+            if not self.sample_when_reached or r or reset:
                 if self.subgoal_caching and self.sg_indx < len(self.sg_cache):
                     self.subgoal = self.sg_cache[self.sg_indx]
                     self.sg_indx += 1
                 else:
-                    if self.subgoal_caching and self.check_cache_contents(self.subgoal):
+                    if self.subgoal_caching and r and self.check_cache_contents(self.subgoal):
                         self.sg_cache.append(self.subgoal)
                     self.subgoal = self.sample_and_select_subgoal(self.state, self.subgoals[-1])
+            else:
+                self.subgoal = self.sample_and_select_subgoal(self.state, self.subgoals[-1])
             
             if self.value_sg_reach:
                 self.subgoal_dist_factor = np.array(self.value_fn(
