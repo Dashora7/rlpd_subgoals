@@ -21,6 +21,7 @@ def icvf_heuristic_old(icvf_fn, batch, usefulness=1, reachability=1):
     # h = jnp.where(advantages < 0, float("-inf"), h)
     return h
 
+@jax.jit
 def icvf_heuristic(icvf_fn, batch, usefulness=1, reachability=1):
     obs = batch["observations"]
     subgoal = batch["actions"]
@@ -30,7 +31,6 @@ def icvf_heuristic(icvf_fn, batch, usefulness=1, reachability=1):
     h = jnp.where(advantages < 0, float("-inf"), usefulness * advantages) + (reachability * value)
     # h = jnp.where(advantages < 0, float("-inf"), value )
     return h
-
 
 def select_subgoal(agent, icvf_fn, obs, goal, n=50, t=1):
     sg_samples = generate_subgoal(agent, obs, goal, t=t, n=n)
