@@ -185,6 +185,7 @@ def main(_):
                 eval_env,
                 num_episodes=FLAGS.eval_episodes,
                 save_video=FLAGS.save_video,
+                training_env=env,
             )
 
             for k, v in eval_info.items():

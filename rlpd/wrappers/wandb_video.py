@@ -15,7 +15,8 @@ class WANDBVideo(gym.Wrapper):
         render_kwargs={},
         max_videos: Optional[int] = None,
         nitish_env=False,
-        nitish_type=None
+        nitish_type=None,
+        training_env=None
     ):
         super().__init__(env)
         assert not nitish_env or nitish_type is not None, "Need to provide nitish_type if using nitish env!"
@@ -26,6 +27,7 @@ class WANDBVideo(gym.Wrapper):
         self._pixel_hw = pixel_hw
         self._render_kwargs = render_kwargs
         self._max_videos = max_videos
+        self.training_env = training_env
         self._video = []
         
 
@@ -58,11 +60,13 @@ class WANDBVideo(gym.Wrapper):
                         pos=np.array([self.subgoal[0], self.subgoal[1], 0.5]),
                         type=2, size=np.array([0.75, 0.75, 0.75]), label="",
                         rgba=np.array([1.0, 0.0, 0.0, 1.0]))
-                    for cachegoal in self.subgoal_cache:
-                        self.env.viewer.add_marker(
-                            pos=np.array([cachegoal[0], cachegoal[1], 0.5]),
-                            type=2, size=np.array([0.5, 0.5, 0.5]), label="",
-                            rgba=np.array([0.0, 1.0, 0.0, 1.0]))
+                    
+                    if self.training_env is not None:
+                        for cachegoal in self.training_env.sg_cache:
+                            self.env.viewer.add_marker(
+                                pos=np.array([cachegoal[0], cachegoal[1], 0.5]),
+                                type=2, size=np.array([0.5, 0.5, 0.5]), label="",
+                                rgba=np.array([0.0, 1.0, 0.0, 1.0]))
                 except:
                     pass
                 
