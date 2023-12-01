@@ -58,6 +58,11 @@ class WANDBVideo(gym.Wrapper):
                         pos=np.array([self.subgoal[0], self.subgoal[1], 0.5]),
                         type=2, size=np.array([0.75, 0.75, 0.75]), label="",
                         rgba=np.array([1.0, 0.0, 0.0, 1.0]))
+                    for cachegoal in self.subgoal_cache:
+                        self.env.viewer.add_marker(
+                            pos=np.array([cachegoal[0], cachegoal[1], 0.5]),
+                            type=2, size=np.array([0.5, 0.5, 0.5]), label="",
+                            rgba=np.array([0.0, 1.0, 0.0, 1.0]))
                 except:
                     pass
                 
