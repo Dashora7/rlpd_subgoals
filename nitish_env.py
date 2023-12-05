@@ -17,14 +17,17 @@ from subgoal_gen_tools import select_subgoal
 obs_to_robot = lambda obs: obs[:2]
 
 class NitishEnv(AntMazeEnv):
-    def __init__(self, subgoal_reward=0.25, value_sg_rew=False, value_sg_reach=False,
-                 icvf_norm=False, icvf_path=None, eps=0.5, subgoal_bonus=0.0, normalize=False,
+    def __init__(self, subgoal_reward=0.25, value_sg_rew=True, value_sg_reach=True,
+                 icvf_norm=True, icvf_path=None, eps=20.0, subgoal_bonus=0.0, normalize=False,
                  goal_sample_freq=20, reward_clip=100.0, only_forward=True, goal_caching=False,
-                 subgoal_gen=True, diffusion_path=None, sg_cond=True, sample_when_reached=True,
-                 **kwargs_dict):
+                 subgoal_gen=True, diffusion_path=None, sg_cond=True, sample_when_reached=False,
+                 sample_when_closer=True, **kwargs_dict):
         self.sg_cond = sg_cond
         self.subgoals = SUBGOALS.copy()
+        
         self.sample_when_reached = sample_when_reached
+        self.sample_when_closer = sample_when_closer
+        assert not (self.sample_when_reached and self.sample_when_closer), "Can only sample when reached or closer, not both!"
         self.subgoal_dist_factor = -1
         self.subgoal_gen = subgoal_gen
         self.subgoal_bonus = subgoal_bonus
@@ -102,9 +105,13 @@ class NitishEnv(AntMazeEnv):
             )
             self.subgoal = self.sample_and_select_subgoal(self.subgoals[0], self.subgoals[-1])
         else:
-            self.subgoal = self.subgoals[1] # start at 0 + 1
-        
+            self.subgoal = self.subgoals[0] # might need to start at 1
+        self.sg_gen_state = None
         super().__init__(max_episode_steps=timeouts[ENV_TYPE], **kwargs_dict)
+        self.init_qpos[0] = 5
+        self.init_qpos[1] = 0.5
+        # self.init_torso_x = self.subgoals[0][0]
+        # self.init_torso_y = self.subgoals[0][1]
         
 
     def step(self, action):
@@ -136,6 +143,7 @@ class NitishEnv(AntMazeEnv):
         ### ASSIGN SUBGOALS AND GIVE BONUS FOR REACHING
         if self.stepnum % self.goal_sample_freq == 0:
             self.goal_init()
+            self.sg_gen_state = self.state
         
         if self.sg_cond:
             obs = np.concatenate([obs, self.subgoal[:2]])
@@ -150,19 +158,25 @@ class NitishEnv(AntMazeEnv):
         self.last_state = obs
         self.subgoals = SUBGOALS.copy()
         self.goal_init(True)
+        self.sg_gen_state = obs
         if self.sg_cond:
             obs = np.concatenate([obs, self.subgoal[:2]])
         return obs
     
     def check_cache_contents(self, new_subgoal):
         for sg in self.sg_cache:
-            if self.value_fn(sg, new_subgoal) <= self.eps:
+            if self.repr_dist(sg, new_subgoal) <= self.eps:
                 return True
         return False
 
     def goal_init(self, reset=False):
+        
         if self.subgoal_gen:
-            if not self.sample_when_reached or self.repr_dist(self.state, self.subgoal) <= self.eps or reset:
+            a = self.sample_when_reached and self.repr_dist(self.state, self.subgoal) <= self.eps
+            b = self.sample_when_closer and self.repr_dist(self.state, self.subgoal) <= self.repr_dist(self.sg_gen_state, self.state)
+            c = reset or not (self.sample_when_reached or self.sample_when_closer)
+            
+            if a or b or c:
                 if self.subgoal_caching and self.sg_indx < len(self.sg_cache):
                     self.subgoal = self.sg_cache[self.sg_indx]
                     self.sg_indx += 1

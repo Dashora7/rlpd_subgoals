@@ -21,7 +21,6 @@ def icvf_heuristic_old(icvf_fn, batch, usefulness=1, reachability=1):
     # h = jnp.where(advantages < 0, float("-inf"), h)
     return h
 
-@jax.jit
 def icvf_heuristic(icvf_fn, batch, usefulness=1, reachability=1):
     obs = batch["observations"]
     subgoal = batch["actions"]
