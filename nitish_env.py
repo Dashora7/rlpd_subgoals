@@ -152,6 +152,11 @@ class NitishEnv(AntMazeEnv):
 
     def reset(self):
         obs = super().reset()
+
+        if self.subgoal_caching:
+            if len(self.sg_cache) > 0:
+                print('CACHE positions', [sg[:2] for sg in self.sg_cache])
+                
         self.sg_indx = 0
         self.state = obs
         self.stepnum = 0
@@ -166,14 +171,15 @@ class NitishEnv(AntMazeEnv):
     def check_cache_contents(self, new_subgoal):
         for sg in self.sg_cache:
             if self.repr_dist(sg, new_subgoal) <= self.eps:
-                return True
-        return False
+                return False
+        return True
 
     def goal_init(self, reset=False):
         
         if self.subgoal_gen:
-            a = self.sample_when_reached and self.repr_dist(self.state, self.subgoal) <= self.eps
-            b = self.sample_when_closer and self.repr_dist(self.state, self.subgoal) <= self.repr_dist(self.sg_gen_state, self.state)
+            r = self.repr_dist(self.state, self.subgoal) <= self.eps
+            a = self.sample_when_reached and r <= self.eps
+            b = self.sample_when_closer and r <= self.repr_dist(self.sg_gen_state, self.state)
             c = reset or not (self.sample_when_reached or self.sample_when_closer)
             
             if a or b or c:
@@ -181,9 +187,11 @@ class NitishEnv(AntMazeEnv):
                     self.subgoal = self.sg_cache[self.sg_indx]
                     self.sg_indx += 1
                 else:
-                    if self.subgoal_caching and self.check_cache_contents(self.subgoal):
+                    if self.subgoal_caching and r <= self.eps and self.check_cache_contents(self.subgoal):
                         self.sg_cache.append(self.subgoal)
                     self.subgoal = self.sample_and_select_subgoal(self.state, self.subgoals[-1])
+            else:
+                self.subgoal = self.sample_and_select_subgoal(self.state, self.subgoals[-1])
             
             if self.value_sg_reach:
                 self.subgoal_dist_factor = np.array(self.value_fn(
