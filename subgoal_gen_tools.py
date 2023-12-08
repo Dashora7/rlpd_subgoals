@@ -40,3 +40,19 @@ def select_subgoal(agent, icvf_fn, obs, goal, n=50, t=1):
     heuristic = icvf_heuristic(icvf_fn, batch, usefulness=1, reachability=1)    
     # select subgoal
     return sg_samples[jnp.argmax(heuristic)]
+
+def select_subgoal_old(agent, icvf_fn, obs, goal, n=50, t=1):
+    sg_samples = generate_subgoal(agent, obs, goal, t=t, n=n)
+    # Convert to probabilities via sigmoid
+    logits_s_to_sg = jnp.array(icvf_fn(obs, sg_samples, sg_samples))
+    logits_sg_to_g = jnp.array(icvf_fn(sg_samples, goal, goal))
+    logits_s_to_sg_to_g = jnp.array(icvf_fn(obs, sg_samples, goal))
+    logits_s_to_sg = logits_s_to_sg - jnp.max(logits_s_to_sg)
+    logits_sg_to_g = logits_sg_to_g - jnp.max(logits_sg_to_g)
+    logits_s_to_sg_to_g = logits_s_to_sg_to_g - jnp.max(logits_s_to_sg_to_g)
+    probs_s_to_sg = 1 / (1 + jnp.exp(-1 * logits_s_to_sg))
+    probs_sg_to_g = 1 / (1 + jnp.exp(-1 * logits_sg_to_g))
+    prob_s_to_sg_to_g = 1 / (1 + jnp.exp(-1 * logits_s_to_sg_to_g))
+    # Compute joint
+    heuristic = probs_s_to_sg * probs_sg_to_g * prob_s_to_sg_to_g 
+    return sg_samples[jnp.argmax(heuristic)]
