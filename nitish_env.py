@@ -12,16 +12,17 @@ from subgoals import SUBGOALS
 SUBGOALS = SUBGOALS[ENV_TYPE]
 import jax
 import jax.numpy as jnp
-import time
+import wandb
 from subgoal_gen_tools import select_subgoal
+from rnd_tools import create_rnd, update_rnd, rnd_bonus
 obs_to_robot = lambda obs: obs[:2]
 
 class NitishEnv(AntMazeEnv):
     def __init__(self, subgoal_reward=0.25, value_sg_rew=True, value_sg_reach=True,
                  icvf_norm=True, icvf_path=None, eps=1.0, subgoal_bonus=0.0, normalize=False,
                  goal_sample_freq=20, reward_clip=100.0, only_forward=True, goal_caching=False,
-                 subgoal_gen=True, diffusion_path=None, sg_cond=True, sample_when_reached=True,
-                 sample_when_closer=False, **kwargs_dict):
+                 subgoal_gen=True, diffusion_path=None, sg_cond=True, sample_when_reached=False,
+                 sample_when_closer=True, rnd_update_freq=100, rnd_scale=1, **kwargs_dict):
         self.sg_cond = sg_cond
         self.subgoals = SUBGOALS.copy()
         
@@ -31,6 +32,8 @@ class NitishEnv(AntMazeEnv):
         self.subgoal_dist_factor = -1
         self.subgoal_gen = subgoal_gen
         self.subgoal_bonus = subgoal_bonus
+        self.rnd_update_freq = rnd_update_freq
+        self.rnd_scale = rnd_scale
         self.sg_indx = 0
         self.reward_clipper = lambda x: np.clip(x, -reward_clip, reward_clip)
         self.icvf_norm = icvf_norm
@@ -112,12 +115,23 @@ class NitishEnv(AntMazeEnv):
         self.init_qpos[1] = 0.5
         # self.init_torso_x = self.subgoals[0][0]
         # self.init_torso_y = self.subgoals[0][1]
+        if self.rnd_scale > 0:
+            self.rnd = create_rnd(29, 8, hidden_dims=[256, 256])
+            self.rnd_key = jax.random.PRNGKey(42)
         
 
     def step(self, action):
         self.last_state = self.state
         obs, reward, done, info = super().step(action)
         self.state = obs
+        
+        # add an RND bonus
+        if self.rnd_scale > 0:
+            bonus = self.rnd_scale * rnd_bonus(self.rnd, self.state, action)
+            reward += bonus
+            if self.stepnum % self.rnd_update_freq == 0:
+                self.rnd_key, self.rnd, rnd_info = update_rnd(self.rnd_key, self.rnd, obs, action)
+            wandb.log({'rnd_loss': rnd_info['rnd_loss']}, step=self.stepnum)
         
         if self.last_state is None:
             self.last_state = obs # account for first step
