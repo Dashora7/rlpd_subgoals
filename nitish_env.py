@@ -18,10 +18,10 @@ obs_to_robot = lambda obs: obs[:2]
 
 class NitishEnv(AntMazeEnv):
     def __init__(self, subgoal_reward=0.25, value_sg_rew=True, value_sg_reach=True,
-                 icvf_norm=True, icvf_path=None, eps=20.0, subgoal_bonus=0.0, normalize=False,
-                 goal_sample_freq=20, reward_clip=100.0, only_forward=True, goal_caching=True,
-                 subgoal_gen=True, diffusion_path=None, sg_cond=False, sample_when_reached=False,
-                 sample_when_closer=True, **kwargs_dict):
+                 icvf_norm=True, icvf_path=None, eps=1.0, subgoal_bonus=0.0, normalize=False,
+                 goal_sample_freq=20, reward_clip=100.0, only_forward=True, goal_caching=False,
+                 subgoal_gen=True, diffusion_path=None, sg_cond=True, sample_when_reached=True,
+                 sample_when_closer=False, **kwargs_dict):
         self.sg_cond = sg_cond
         self.subgoals = SUBGOALS.copy()
         
@@ -76,7 +76,7 @@ class NitishEnv(AntMazeEnv):
             
         self.norm_func = lambda x, y: np.linalg.norm(x - y) # default L2 norm function
         self.repr_dist = lambda x, y: self.norm_func(self.state_repr_func(x), self.state_repr_func(y))
-        
+        # oracle reach: self.repr_dist = lambda x, y: self.norm_func(obs_to_robot(x), obs_to_robot(y))
         self.eps = eps
         self.state = None
         self.subgoal_reward = subgoal_reward
@@ -106,7 +106,7 @@ class NitishEnv(AntMazeEnv):
             self.subgoal = self.sample_and_select_subgoal(self.subgoals[0], self.subgoals[-1])
         else:
             self.subgoal = self.subgoals[0] # might need to start at 1
-        self.sg_gen_state = None
+        self.sg_gen_state = self.subgoals[0]
         super().__init__(max_episode_steps=timeouts[ENV_TYPE], **kwargs_dict)
         self.init_qpos[0] = 5
         self.init_qpos[1] = 0.5
@@ -143,8 +143,7 @@ class NitishEnv(AntMazeEnv):
         ### ASSIGN SUBGOALS AND GIVE BONUS FOR REACHING
         if self.stepnum % self.goal_sample_freq == 0:
             self.goal_init()
-            self.sg_gen_state = self.state
-        
+            
         if self.sg_cond:
             obs = np.concatenate([obs, self.subgoal[:2]])
         
@@ -152,11 +151,6 @@ class NitishEnv(AntMazeEnv):
 
     def reset(self):
         obs = super().reset()
-
-        if self.subgoal_caching:
-            if len(self.sg_cache) > 0:
-                print('CACHE positions', [sg[:2] for sg in self.sg_cache])
-                
         self.sg_indx = 0
         self.state = obs
         self.stepnum = 0
