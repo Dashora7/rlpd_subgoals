@@ -19,8 +19,8 @@ obs_to_robot = lambda obs: obs[:2]
 class NitishEnv(AntMazeEnv):
     def __init__(self, subgoal_reward=0.25, value_sg_rew=True, value_sg_reach=True,
                  icvf_norm=True, icvf_path=None, eps=20.0, subgoal_bonus=0.0, normalize=False,
-                 goal_sample_freq=20, reward_clip=100.0, only_forward=True, goal_caching=False,
-                 subgoal_gen=True, diffusion_path=None, sg_cond=True, sample_when_reached=False,
+                 goal_sample_freq=20, reward_clip=100.0, only_forward=True, goal_caching=True,
+                 subgoal_gen=True, diffusion_path=None, sg_cond=False, sample_when_reached=False,
                  sample_when_closer=True, **kwargs_dict):
         self.sg_cond = sg_cond
         self.subgoals = SUBGOALS.copy()
@@ -47,7 +47,7 @@ class NitishEnv(AntMazeEnv):
         assert not self.value_sg_reach or self.icvf_norm, "Need to use ICVF for value reward!"
         assert not self.subgoal_caching or self.subgoal_gen, "Need to use subgoal generation for caching!"
         assert not self.subgoal_caching or not self.sg_cond, "Caching only makes sense for an unconditioned case."
-        assert not self.subgoal_caching or self.sample_when_reached, "Caching only makes sense if sampling when reached."
+        assert not self.subgoal_caching or (self.sample_when_reached or self.sample_when_closer), "Caching only makes sense if sampling when reached/closer."
         
         if icvf_path is not None:   
             with open(icvf_path, 'rb') as f:
@@ -162,8 +162,8 @@ class NitishEnv(AntMazeEnv):
         self.stepnum = 0
         self.last_state = obs
         self.subgoals = SUBGOALS.copy()
-        self.goal_init(True)
         self.sg_gen_state = obs
+        self.goal_init(True)
         if self.sg_cond:
             obs = np.concatenate([obs, self.subgoal[:2]])
         return obs
@@ -177,21 +177,27 @@ class NitishEnv(AntMazeEnv):
     def goal_init(self, reset=False):
         
         if self.subgoal_gen:
-            r = self.repr_dist(self.state, self.subgoal) <= self.eps
-            a = self.sample_when_reached and r <= self.eps
-            b = self.sample_when_closer and r <= self.repr_dist(self.sg_gen_state, self.state)
+            r = self.repr_dist(self.state, self.subgoal)
+            
+            v_to_sg = -1 * self.value_fn(self.state, self.subgoal)
+            v_to_st = -1 * self.value_fn(self.state, self.sg_gen_state)
+            
+            a = self.sample_when_reached and r < self.eps
+            b = self.sample_when_closer
+            b = self.sample_when_closer and v_to_sg > v_to_st
             c = reset or not (self.sample_when_reached or self.sample_when_closer)
             
             if a or b or c:
-                if self.subgoal_caching and self.sg_indx < len(self.sg_cache):
-                    self.subgoal = self.sg_cache[self.sg_indx]
-                    self.sg_indx += 1
-                else:
-                    if self.subgoal_caching and r <= self.eps and self.check_cache_contents(self.subgoal):
+                if self.subgoal_caching: 
+                    if self.sg_indx < len(self.sg_cache):
+                        self.subgoal = self.sg_cache[self.sg_indx]
+                        self.sg_indx += 1
+                    elif (a or b) and self.check_cache_contents(self.subgoal):
                         self.sg_cache.append(self.subgoal)
+                        self.subgoal = self.sample_and_select_subgoal(self.state, self.subgoals[-1])
+                else:
+                    self.sg_gen_state = self.state.reshape(1, -1)
                     self.subgoal = self.sample_and_select_subgoal(self.state, self.subgoals[-1])
-            else:
-                self.subgoal = self.sample_and_select_subgoal(self.state, self.subgoals[-1])
             
             if self.value_sg_reach:
                 self.subgoal_dist_factor = np.array(self.value_fn(
