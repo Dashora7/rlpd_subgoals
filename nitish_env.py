@@ -170,6 +170,7 @@ class NitishEnv(AntMazeEnv):
         self.stepnum = 0
         self.last_state = obs
         self.subgoals = SUBGOALS.copy()
+        self.sg_gen_state = obs
         self.goal_init(True)
         if self.sg_cond:
             obs = np.concatenate([obs, self.subgoal[:2]])
