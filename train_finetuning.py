@@ -159,10 +159,13 @@ def main(_):
         observation = next_observation
 
         if done:
+            wandb.log(
+                {f"training/rnd": env.rnd_ep_bonus / env.stepnum}, step=i + FLAGS.pretrain_steps)
             observation, done = env.reset(), False
             for k, v in info["episode"].items():
                 decode = {"r": "return", "l": "length", "t": "time"}
                 wandb.log({f"training/{decode[k]}": v}, step=i + FLAGS.pretrain_steps)
+            
 
         if i >= FLAGS.start_training:
             online_batch = replay_buffer.sample(
