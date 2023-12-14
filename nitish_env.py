@@ -18,11 +18,11 @@ from rnd_tools import create_rnd, update_rnd, rnd_bonus
 obs_to_robot = lambda obs: obs[:2]
 
 class NitishEnv(AntMazeEnv):
-    def __init__(self, subgoal_reward=0.25, value_sg_rew=True, value_sg_reach=True,
+    def __init__(self, subgoal_reward=100, value_sg_rew=True, value_sg_reach=True,
                  icvf_norm=True, icvf_path=None, eps=1.0, subgoal_bonus=0.0, normalize=False,
-                 goal_sample_freq=20, reward_clip=100.0, only_forward=True, goal_caching=False,
+                 goal_sample_freq=1, reward_clip=1e4, only_forward=True, goal_caching=False,
                  subgoal_gen=True, diffusion_path=None, sg_cond=True, sample_when_reached=False,
-                 sample_when_closer=True, rnd_update_freq=1, rnd_scale=1, **kwargs_dict):
+                 sample_when_closer=True, rnd_update_freq=1, rnd_scale=0, **kwargs_dict):
         self.sg_cond = sg_cond
         self.subgoals = SUBGOALS.copy()
         self.rnd_update_freq = rnd_update_freq
@@ -161,6 +161,8 @@ class NitishEnv(AntMazeEnv):
             
         if self.sg_cond:
             obs = np.concatenate([obs, self.subgoal[:2]])
+            
+        info["V(s, sg, sg)"] = -1 * self.value_fn(self.state, self.subgoal)
         
         return obs, reward, done, info
 
@@ -193,7 +195,6 @@ class NitishEnv(AntMazeEnv):
             v_to_st = -1 * self.value_fn(self.state, self.sg_gen_state)
             
             a = self.sample_when_reached and r < self.eps
-            b = self.sample_when_closer
             b = self.sample_when_closer and v_to_sg > v_to_st
             c = reset or not (self.sample_when_reached or self.sample_when_closer)
             
