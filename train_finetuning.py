@@ -8,6 +8,7 @@ import d4rl.locomotion
 import dmcgym
 import gym
 from nitish_env import NitishEnv
+from nitish_env_simple import NitishEnvSimple
 from d4rl.locomotion import wrappers
 import numpy as np
 import tqdm
@@ -107,6 +108,10 @@ def main(_):
         env = wrappers.NormalizedBoxEnv(gym.make(
             'nitish-v0', subgoal_dense=True, icvf_path=FLAGS.icvf_path,
             diffusion_path=FLAGS.diffusion_path)) # NitishEnv()
+    elif FLAGS.env_name == 'nitish-custom-antmaze-simple':
+        env = wrappers.NormalizedBoxEnv(gym.make(
+            'nitish-v0-simple', icvf_path=FLAGS.icvf_path,
+            diffusion_path=FLAGS.diffusion_path))
     else:
         env = gym.make(FLAGS.env_name)
     env = wrap_gym(env, rescale_actions=True)
@@ -122,6 +127,10 @@ def main(_):
         eval_env = wrappers.NormalizedBoxEnv(gym.make(
             'nitish-v0', subgoal_dense=True, icvf_path=FLAGS.icvf_path,
             diffusion_path=FLAGS.diffusion_path)) # NitishEnv()
+    elif FLAGS.env_name == 'nitish-custom-antmaze-simple':
+        eval_env = wrappers.NormalizedBoxEnv(gym.make(
+            'nitish-v0-simple', icvf_path=FLAGS.icvf_path,
+            diffusion_path=FLAGS.diffusion_path))
     else:
         eval_env = gym.make(FLAGS.env_name)
     eval_env = wrap_gym(eval_env, rescale_actions=True)
