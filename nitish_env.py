@@ -7,9 +7,7 @@ from src import icvf_learner as learner
 from src.icvf_networks import icvfs, create_icvf, LayerNormMLP
 from src.subgoal_diffuser import GCDDPMBCAgent
 from flax.serialization import from_state_dict
-ENV_TYPE = 'large' # medium, large, small
 from subgoals import SUBGOALS
-SUBGOALS = SUBGOALS[ENV_TYPE]
 import jax
 import jax.numpy as jnp
 import wandb
@@ -22,9 +20,10 @@ class NitishEnv(AntMazeEnv):
                  icvf_norm=True, icvf_path=None, eps=1.0, subgoal_bonus=0.0, normalize=False,
                  goal_sample_freq=1, reward_clip=1e4, only_forward=True, goal_caching=False,
                  subgoal_gen=True, diffusion_path=None, sg_cond=True, sample_when_reached=False,
-                 sample_when_closer=True, rnd_update_freq=1, rnd_scale=0, **kwargs_dict):
+                 sample_when_closer=True, rnd_update_freq=1, etype='small', rnd_scale=0, **kwargs_dict):
         self.sg_cond = sg_cond
-        self.subgoals = SUBGOALS.copy()
+        self.SUBGOALS = SUBGOALS[etype].copy()
+        self.subgoals = self.SUBGOALS.copy()
         self.rnd_update_freq = rnd_update_freq
         self.rnd_scale = rnd_scale
         self.rnd_ep_bonus = 0
@@ -113,7 +112,7 @@ class NitishEnv(AntMazeEnv):
         else:
             self.subgoal = self.subgoals[0] # might need to start at 1
         self.sg_gen_state = self.subgoals[0]
-        super().__init__(max_episode_steps=timeouts[ENV_TYPE], **kwargs_dict)
+        super().__init__(max_episode_steps=timeouts[etype], **kwargs_dict)
         self.init_qpos[0] = 5
         self.init_qpos[1] = 0.5
         # self.init_torso_x = self.subgoals[0][0]
@@ -173,7 +172,7 @@ class NitishEnv(AntMazeEnv):
         self.stepnum = 0
         self.rnd_ep_bonus = 0
         self.last_state = obs
-        self.subgoals = SUBGOALS.copy()
+        self.subgoals = self.SUBGOALS.copy()
         self.sg_gen_state = obs
         self.goal_init(True)
         if self.sg_cond:
@@ -243,20 +242,21 @@ ds_dict = {
     'large': 'http://rail.eecs.berkeley.edu/datasets/offline_rl/ant_maze_v2/Ant_maze_hardest-maze_noisy_multistart_True_multigoal_True_sparse_fixed.hdf5'
 }
 
-kwargs_dict = {
-    'maze_map': mmaps[ENV_TYPE],
-    'reward_type': 'sparse', # don't use their dense, it sucks
-    'dataset_url':ds_dict[ENV_TYPE],
-    'non_zero_reset':False, 
-    'eval':True,
-    'maze_size_scaling': 4.0, # 4.0 default this makes row/col sizes for subgoal determination !
-    'ref_min_score': 0.0,
-    'ref_max_score': 1.0,
-    'v2_resets': True
-}
-gym.envs.register(
-     id='nitish-v0',
-     entry_point='nitish_env:NitishEnv',
-     max_episode_steps=timeouts[ENV_TYPE],
-     kwargs=kwargs_dict,
-)
+def register(env_type):
+    kwargs_dict = {
+        'maze_map': mmaps[env_type],
+        'reward_type': 'sparse', # don't use their dense, it sucks
+        'dataset_url':ds_dict[env_type],
+        'non_zero_reset':False, 
+        'eval':True,
+        'maze_size_scaling': 4.0, # 4.0 default this makes row/col sizes for subgoal determination !
+        'ref_min_score': 0.0,
+        'ref_max_score': 1.0,
+        'v2_resets': True
+    }
+    gym.envs.register(
+        id='nitish-v0',
+        entry_point='nitish_env:NitishEnv',
+        max_episode_steps=timeouts[env_type],
+        kwargs=kwargs_dict,
+    )

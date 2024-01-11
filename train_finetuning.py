@@ -1,14 +1,14 @@
 #! /usr/bin/env python
 import os
 import pickle
-
+import jax
 import d4rl
 import d4rl.gym_mujoco
 import d4rl.locomotion
 import dmcgym
 import gym
-from nitish_env import NitishEnv
-from nitish_env_simple import NitishEnvSimple
+from nitish_env import NitishEnv, register
+from nitish_env_simple import NitishEnvSimple, register_simple
 from d4rl.locomotion import wrappers
 import numpy as np
 import tqdm
@@ -19,7 +19,7 @@ try:
 except:
     print("Not loading checkpointing functionality.")
 from ml_collections import config_flags
-
+from rnd_tools import create_rnd, rnd_bonus, update_rnd
 import wandb
 from rlpd.agents import SACLearner
 from rlpd.data import ReplayBuffer
@@ -59,13 +59,13 @@ flags.DEFINE_boolean(
 )
 flags.DEFINE_string("icvf_path", None, "model path.")
 flags.DEFINE_string("diffusion_path", None, "model path.")
+flags.DEFINE_string("type", 'small', "antmaze type, if nitish's custom")
 config_flags.DEFINE_config_file(
     "config",
     "configs/sac_config.py",
     "File path to the training hyperparameter configuration.",
     lock_config=False,
 )
-
 
 def combine(one_dict, other_dict):
     combined = {}
@@ -86,7 +86,6 @@ def combine(one_dict, other_dict):
 
 def main(_):
     assert FLAGS.offline_ratio >= 0.0 and FLAGS.offline_ratio <= 1.0
-
     wandb.init(project=FLAGS.project_name, entity='dashora7')
     wandb.config.update(FLAGS)
 
@@ -105,13 +104,15 @@ def main(_):
         os.makedirs(buffer_dir, exist_ok=True)
     
     if FLAGS.env_name == 'nitish-custom-antmaze':
+        register(FLAGS.type)
         env = wrappers.NormalizedBoxEnv(gym.make(
             'nitish-v0', subgoal_dense=True, icvf_path=FLAGS.icvf_path,
-            diffusion_path=FLAGS.diffusion_path)) # NitishEnv()
+            diffusion_path=FLAGS.diffusion_path, etype=FLAGS.type)) # NitishEnv()
     elif FLAGS.env_name == 'nitish-custom-antmaze-simple':
+        register_simple(FLAGS.type)
         env = wrappers.NormalizedBoxEnv(gym.make(
             'nitish-v0-simple', icvf_path=FLAGS.icvf_path,
-            diffusion_path=FLAGS.diffusion_path))
+            diffusion_path=FLAGS.diffusion_path, etype=FLAGS.type))
     else:
         env = gym.make(FLAGS.env_name)
     env = wrap_gym(env, rescale_actions=True)
@@ -119,13 +120,15 @@ def main(_):
     env.seed(FLAGS.seed)
     
     if FLAGS.env_name == 'nitish-custom-antmaze':
+        register(FLAGS.type)
         eval_env = wrappers.NormalizedBoxEnv(gym.make(
             'nitish-v0', subgoal_dense=True, icvf_path=FLAGS.icvf_path,
-            diffusion_path=FLAGS.diffusion_path)) # NitishEnv()
+            diffusion_path=FLAGS.diffusion_path, etype=FLAGS.type)) # NitishEnv()
     elif FLAGS.env_name == 'nitish-custom-antmaze-simple':
+        register_simple(FLAGS.type)
         eval_env = wrappers.NormalizedBoxEnv(gym.make(
             'nitish-v0-simple', icvf_path=FLAGS.icvf_path,
-            diffusion_path=FLAGS.diffusion_path))
+            diffusion_path=FLAGS.diffusion_path, etype=FLAGS.type))
     else:
         eval_env = gym.make(FLAGS.env_name)
     eval_env = wrap_gym(eval_env, rescale_actions=True)
@@ -141,6 +144,14 @@ def main(_):
         env.observation_space, env.action_space, FLAGS.max_steps
     )
     replay_buffer.seed(FLAGS.seed)
+    
+    
+    rnd_update_freq = 1
+    start_rnd = 10000
+    rnd = create_rnd(29, 8, hidden_dims=[256, 256], env=FLAGS.type)
+    rnd_key = jax.random.PRNGKey(42)
+    rnd_ep_bonus = 0
+    
 
     observation, done = env.reset(), False
     for i in tqdm.tqdm(
@@ -151,6 +162,13 @@ def main(_):
         else:
             action, agent = agent.sample_actions(observation)
         next_observation, reward, done, info = env.step(action)
+        
+        if i > start_rnd:
+            bonus = rnd_bonus(rnd, observation.reshape(1, -1), action.reshape(1, -1))
+            b = bonus.reshape(-1)[0].item()
+            reward += b
+            rnd_ep_bonus += b
+        
         if not done or "TimeLimit.truncated" in info:
             mask = 1.0
         else:
@@ -169,7 +187,8 @@ def main(_):
 
         if done:
             wandb.log(
-                {f"training/rnd": env.rnd_ep_bonus / env.stepnum}, step=i + FLAGS.pretrain_steps)
+                {f"training/rnd": rnd_ep_bonus / info["episode"]['l']}, step=i + FLAGS.pretrain_steps)
+            rnd_ep_bonus = 0
             observation, done = env.reset(), False
             for k, v in info["episode"].items():
                 decode = {"r": "return", "l": "length", "t": "time"}
@@ -186,6 +205,12 @@ def main(_):
                 batch["rewards"] -= 1
 
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
+            
+            if i % rnd_update_freq == 0:
+                rnd_key, rnd, rnd_info = update_rnd(
+                    rnd_key, rnd,
+                    batch['observations'],
+                    batch['actions'])
 
             if i % FLAGS.log_interval == 0:
                 for k, v in update_info.items():
@@ -198,6 +223,7 @@ def main(_):
                 num_episodes=FLAGS.eval_episodes,
                 save_video=FLAGS.save_video,
                 training_env=env,
+                etype=FLAGS.type
             )
 
             for k, v in eval_info.items():

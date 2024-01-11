@@ -7,12 +7,12 @@ from rlpd.wrappers.wandb_video import WANDBVideo
 
 
 def evaluate(
-    agent, env: gym.Env, num_episodes: int, save_video: bool = False, training_env=None
+    agent, env: gym.Env, num_episodes: int, save_video: bool = False, training_env=None, etype=None
 ) -> Dict[str, float]:
     if save_video:
         env = WANDBVideo(
             env, name="eval_video", max_videos=1, nitish_env=True,
-            nitish_type='small', training_env=training_env)
+            nitish_type=etype, training_env=training_env)
     env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=num_episodes)
     for i in range(num_episodes):
         observation, done = env.reset(), False
