@@ -11,10 +11,9 @@ def get_config():
 
     config.discount = 0.99
 
-    config.num_qs = 2
-
+    config.num_qs = 10
     config.tau = 0.005
 
-    config.critic_layer_norm = False
+    config.critic_layer_norm = True
 
     return config

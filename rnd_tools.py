@@ -85,7 +85,6 @@ def rnd_bonus(
         action: jax.Array
 ) -> jax.Array:
     state_action = jnp.concatenate([state, action], axis=1)
-    
     pred, target = rnd.apply_fn(rnd.params, state_action)
     bonus = jnp.sum((pred - target) ** 2, axis=1) / rnd.rms.std
     return bonus
@@ -114,8 +113,8 @@ def create_rnd(
         state_dim: int,
         action_dim: int,
         env: str,
-        hidden_dims: Sequence[int] = (256, 256),
-        learning_rate: float = 1e-3,
+        hidden_dims: Sequence[int] = (256, 256, 256),
+        learning_rate: float = 3e-4,
         seed: int = 0,
 ) -> RNDTrainState:
     key = jax.random.PRNGKey(seed)

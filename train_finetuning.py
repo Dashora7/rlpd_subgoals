@@ -145,10 +145,10 @@ def main(_):
     )
     replay_buffer.seed(FLAGS.seed)
     
-    
+    use_rnd = True
     rnd_update_freq = 1
     start_rnd = 10000
-    rnd = create_rnd(29, 8, hidden_dims=[256, 256], env=FLAGS.type)
+    rnd = create_rnd(29, 8, hidden_dims=[256, 256, 256], env=FLAGS.type)
     rnd_key = jax.random.PRNGKey(42)
     rnd_ep_bonus = 0
     
@@ -163,10 +163,9 @@ def main(_):
             action, agent = agent.sample_actions(observation)
         next_observation, reward, done, info = env.step(action)
         
-        if i > start_rnd:
+        if use_rnd and i > start_rnd:
             bonus = rnd_bonus(rnd, observation.reshape(1, -1), action.reshape(1, -1))
             b = bonus.reshape(-1)[0].item()
-            reward += b
             rnd_ep_bonus += b
         
         if not done or "TimeLimit.truncated" in info:
@@ -200,13 +199,16 @@ def main(_):
                 int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
             )
             batch = unfreeze(online_batch)
+            
+            if use_rnd:
+                batch["rewards"] += rnd_bonus(rnd, batch['observations'], batch['actions'])
 
             if "antmaze" in FLAGS.env_name:
                 batch["rewards"] -= 1
 
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
             
-            if i % rnd_update_freq == 0:
+            if use_rnd and i % rnd_update_freq == 0:
                 rnd_key, rnd, rnd_info = update_rnd(
                     rnd_key, rnd,
                     batch['observations'],
