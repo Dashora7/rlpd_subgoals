@@ -151,7 +151,8 @@ def main(_):
     rnd = create_rnd(29, 8, hidden_dims=[256, 256, 256], env=FLAGS.type)
     rnd_key = jax.random.PRNGKey(42)
     rnd_ep_bonus = 0
-    
+    rnd_ep_loss = 0
+    rnd_multiplier = float(1 / 2560)
 
     observation, done = env.reset(), False
     for i in tqdm.tqdm(
@@ -166,6 +167,8 @@ def main(_):
         if use_rnd and i % rnd_update_freq == 0:
             rnd_key, rnd, rnd_info = update_rnd(
                 rnd_key, rnd, observation.reshape(1, -1), action.reshape(1, -1))
+            loss = rnd_info['rnd_loss'].item()
+            rnd_ep_loss += loss
         
         if not done or "TimeLimit.truncated" in info:
             mask = 1.0
@@ -185,8 +188,12 @@ def main(_):
 
         if done:
             wandb.log(
-                {f"training/rnd_avg": rnd_ep_bonus / info["episode"]['l']}, step=i + FLAGS.pretrain_steps)
+                {f"training/rnd_avg_bonus": rnd_ep_bonus / info["episode"]['l']}, step=i + FLAGS.pretrain_steps)
             rnd_ep_bonus = 0
+            wandb.log(
+                {f"training/rnd_avg_loss": rnd_ep_loss / info["episode"]['l']}, step=i + FLAGS.pretrain_steps)
+            rnd_ep_loss = 0
+            
             observation, done = env.reset(), False
             for k, v in info["episode"].items():
                 decode = {"r": "return", "l": "length", "t": "time"}
@@ -200,11 +207,12 @@ def main(_):
             batch = unfreeze(online_batch)
             
             if use_rnd and i > start_rnd:
-                bonus = rnd_bonus(rnd, batch['observations'], batch['actions'])
+                bonus = rnd_multiplier * rnd_bonus(rnd, batch['observations'], batch['actions'])
                 rnd_ep_bonus += bonus.mean().item()
                 batch["rewards"] += np.array(bonus)
 
             if "antmaze" in FLAGS.env_name:
+                batch["rewards"] *= 10
                 batch["rewards"] -= 1
 
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
@@ -213,7 +221,9 @@ def main(_):
                 rnd_key, rnd, rnd_info = update_rnd(
                     rnd_key, rnd,
                     batch['observations'],
-                    batch['actions'])"""
+                    batch['actions'])
+                loss = rnd_info['rnd_loss'].item()
+                rnd_ep_loss += loss"""
 
             if i % FLAGS.log_interval == 0:
                 for k, v in update_info.items():

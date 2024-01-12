@@ -93,6 +93,9 @@ class WANDBVideo(gym.Wrapper):
         self._update_plot()
         
     def _update_plot(self):
+        if self._max_videos <= 0:
+            return
+        
         if len(self.lines) == 0:
             _, (ax1, ax2)  = plt.subplots(1, 2, figsize=(12, 5))
             line = ax1.plot([], [])[0]
@@ -113,6 +116,7 @@ class WANDBVideo(gym.Wrapper):
         self.lines[0].set_data(np.arange(len(self._plotdata)), self._plotdata)
         self.lines[1].set_data(np.arange(len(self._rewards)), self._rewards)
         npimg = mplfig_to_npimage(plt.gcf())
+        
         self._plotvideo.append(npimg)
 
     def reset(self, **kwargs):
@@ -126,13 +130,13 @@ class WANDBVideo(gym.Wrapper):
         self._update_plot()
         return obs
 
-    def step(self, action: np.ndarray):
+    def step_vid(self, action: np.ndarray):
 
         obs, reward, done, info = super().step(action)
         self._add_frame(obs)
         self._add_plotdata(reward, info)
 
-        if done and len(self._video) > 0:
+        if done and len(self._video) > 0 and len(self._plotvideo) > 0:
             if self._max_videos is not None:
                 self._max_videos -= 1
             video = np.moveaxis(np.stack(self._video), -1, 1)
@@ -144,9 +148,22 @@ class WANDBVideo(gym.Wrapper):
             video = wandb.Video(video, fps=20, format="mp4")
             pvid = wandb.Video(pvid, fps=20, format="mp4")
             wandb.log({self._name: video, f"{self._name}_plot": pvid}, commit=False)
+            # wandb.log({self._name: video}, commit=False)
             
         return obs, reward, done, info
 
+    def step(self, action: np.ndarray):
+        obs, reward, done, info = super().step(action)
+        self._add_frame(obs)
+        if done and len(self._video) > 0:
+            if self._max_videos is not None:
+                self._max_videos -= 1
+            video = np.moveaxis(np.stack(self._video), -1, 1)
+            if video.shape[1] == 1:
+                video = np.repeat(video, 3, 1)
+            video = wandb.Video(video, fps=20, format="mp4")
+            wandb.log({self._name: video}, commit=False)
+        return obs, reward, done, info
 
 def mplfig_to_npimage(fig):
     """Converts a matplotlib figure to a RGB frame after updating the canvas."""
