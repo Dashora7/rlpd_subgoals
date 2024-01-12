@@ -163,10 +163,9 @@ def main(_):
             action, agent = agent.sample_actions(observation)
         next_observation, reward, done, info = env.step(action)
         
-        if use_rnd and i > start_rnd:
-            bonus = rnd_bonus(rnd, observation.reshape(1, -1), action.reshape(1, -1))
-            b = bonus.reshape(-1)[0].item()
-            rnd_ep_bonus += b
+        if use_rnd and i % rnd_update_freq == 0:
+            rnd_key, rnd, rnd_info = update_rnd(
+                rnd_key, rnd, observation.reshape(1, -1), action.reshape(1, -1))
         
         if not done or "TimeLimit.truncated" in info:
             mask = 1.0
@@ -186,7 +185,7 @@ def main(_):
 
         if done:
             wandb.log(
-                {f"training/rnd": rnd_ep_bonus / info["episode"]['l']}, step=i + FLAGS.pretrain_steps)
+                {f"training/rnd_avg": rnd_ep_bonus / info["episode"]['l']}, step=i + FLAGS.pretrain_steps)
             rnd_ep_bonus = 0
             observation, done = env.reset(), False
             for k, v in info["episode"].items():
@@ -200,19 +199,21 @@ def main(_):
             )
             batch = unfreeze(online_batch)
             
-            if use_rnd:
-                batch["rewards"] += rnd_bonus(rnd, batch['observations'], batch['actions'])
+            if use_rnd and i > start_rnd:
+                bonus = rnd_bonus(rnd, batch['observations'], batch['actions'])
+                rnd_ep_bonus += bonus.mean().item()
+                batch["rewards"] += np.array(bonus)
 
             if "antmaze" in FLAGS.env_name:
                 batch["rewards"] -= 1
 
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
             
-            if use_rnd and i % rnd_update_freq == 0:
+            """if use_rnd and i % rnd_update_freq == 0:
                 rnd_key, rnd, rnd_info = update_rnd(
                     rnd_key, rnd,
                     batch['observations'],
-                    batch['actions'])
+                    batch['actions'])"""
 
             if i % FLAGS.log_interval == 0:
                 for k, v in update_info.items():
