@@ -133,6 +133,7 @@ class WANDBVideo(gym.Wrapper):
         self._plotvideo.clear()
         self._rewards.clear()
         self.lines = []
+        plt.close()
         obs = super().reset(**kwargs)
         self._add_frame(obs)
         self._update_plot()
