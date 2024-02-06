@@ -8,9 +8,13 @@ from src.icvf_networks import LayerNormMLP
 import chex
 from antmaze_stats import *
 
-mean_std = {'small': (oa_mean_umaze, oa_std_umaze),
+simple_mean_std = {'umaze': (oa_mean_umaze, oa_std_umaze),
             'medium': (oa_mean_med, oa_std_med),
             'large': (oa_mean_hard, oa_std_hard)}
+mean_std = {}
+for k, v in simple_mean_std.items():
+    # insert the first two elements at the end of obs
+    mean_std[k] = ( np.insert(v[0], 29, v[0][:2]),  np.insert(v[1], 29, v[1][:2]) )
 
 def normalize(arr: jax.Array, mean: jax.Array, std: jax.Array, eps: float = 1e-8) -> jax.Array:
     return (arr - mean) / (std + eps)
@@ -67,9 +71,11 @@ class RND(nn.Module):
     random_model: nn.Module
     predictive_model: nn.Module
     env: str
+    simple: bool
     
     def __call__(self, state_action):
-        oa_mean, oa_std = mean_std[self.env]
+        oa_mean, oa_std = simple_mean_std[self.env] if self.simple else mean_std[self.env]
+        
         state_action = normalize(state_action, oa_mean, oa_std)
         pred = self.predictive_model(state_action)
         target = self.random_model(state_action)
@@ -86,7 +92,7 @@ def rnd_bonus(
 ) -> jax.Array:
     state_action = jnp.concatenate([state, action], axis=1)
     pred, target = rnd.apply_fn(rnd.params, state_action)
-    bonus = jnp.sum((pred - target) ** 2, axis=1) / rnd.rms.std
+    bonus = jnp.mean((pred - target) ** 2, axis=1) / rnd.rms.std
     return bonus
 
 @jax.jit
@@ -113,6 +119,7 @@ def create_rnd(
         state_dim: int,
         action_dim: int,
         env: str,
+        simple: bool,
         hidden_dims: Sequence[int] = (256, 256, 256),
         learning_rate: float = 3e-4,
         seed: int = 0,
@@ -121,8 +128,9 @@ def create_rnd(
     key, rnd_key = jax.random.split(key)
     random_model = LayerNormMLP(hidden_dims=hidden_dims)
     predictive_model = LayerNormMLP(hidden_dims=hidden_dims)
-    rnd_module = RND(random_model, predictive_model, env)
-    params = rnd_module.init(rnd_key, jnp.ones((1, state_dim + action_dim)))
+    rnd_module = RND(random_model, predictive_model, env, simple)
+    inp_dim = state_dim + action_dim if simple else state_dim + action_dim + 2
+    params = rnd_module.init(rnd_key, jnp.ones((1, inp_dim)))
     return RNDTrainState.create(
         apply_fn=rnd_module.apply,
         params=params,

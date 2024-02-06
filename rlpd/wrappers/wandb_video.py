@@ -45,8 +45,14 @@ class WANDBVideo(gym.Wrapper):
                 self._video.append(obs["pixels"])
         else:
             if self._nitish_env:
+                if self.env.viewer is not None:
+                    self.env.viewer.add_marker(
+                        pos=np.array([self.env.target_goal[0], self.env.target_goal[1], 0.5]),
+                        type=2, size=np.array([0.75, 0.75, 0.75]), label="",
+                        rgba=np.array([0.0, 0.0, 1.0, 1.0]))
+                
                 try:
-                    if self._nitish_type == 'small':
+                    if self._nitish_type == 'umaze':
                         self.env.viewer.cam.lookat[0] = 4
                         self.env.viewer.cam.lookat[1] = 4
                         self.env.viewer.cam.distance = 20
@@ -64,6 +70,8 @@ class WANDBVideo(gym.Wrapper):
                         pos=np.array([self.subgoal[0], self.subgoal[1], 0.5]),
                         type=2, size=np.array([0.75, 0.75, 0.75]), label="",
                         rgba=np.array([1.0, 0.0, 0.0, 1.0]))
+                    
+                    
                     
                     if self.training_env is not None:
                         for cachegoal in self.training_env.sg_cache:

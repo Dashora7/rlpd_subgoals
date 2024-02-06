@@ -10,26 +10,18 @@ from flax.serialization import from_state_dict
 from subgoals import SUBGOALS
 import jax
 import jax.numpy as jnp
-import wandb
 from subgoal_gen_tools import select_subgoal
-from rnd_tools import create_rnd, update_rnd, rnd_bonus
 obs_to_robot = lambda obs: obs[:2]
 
 class NitishEnv(AntMazeEnv):
-    def __init__(self, subgoal_reward=100, value_sg_rew=True, value_sg_reach=True,
+    def __init__(self, subgoal_reward=1, value_sg_rew=True, value_sg_reach=True,
                  icvf_norm=True, icvf_path=None, eps=1.0, subgoal_bonus=0.0, normalize=False,
                  goal_sample_freq=1, reward_clip=1e4, only_forward=True, goal_caching=False,
                  subgoal_gen=True, diffusion_path=None, sg_cond=True, sample_when_reached=False,
-                 sample_when_closer=True, rnd_update_freq=1, etype='small', rnd_scale=0, **kwargs_dict):
+                 sample_when_closer=True, etype='small', **kwargs_dict):
         self.sg_cond = sg_cond
         self.SUBGOALS = SUBGOALS[etype].copy()
         self.subgoals = self.SUBGOALS.copy()
-        self.rnd_update_freq = rnd_update_freq
-        self.rnd_scale = rnd_scale
-        self.rnd_ep_bonus = 0
-        if self.rnd_scale > 0:
-            self.rnd = create_rnd(29, 8, hidden_dims=[256, 256])
-            self.rnd_key = jax.random.PRNGKey(42)
         self.sample_when_reached = sample_when_reached
         self.sample_when_closer = sample_when_closer
         assert not (self.sample_when_reached and self.sample_when_closer), "Can only sample when reached or closer, not both!"
@@ -59,12 +51,12 @@ class NitishEnv(AntMazeEnv):
                 icvf_params = pickle.load(f) 
             params = icvf_params['agent']
             conf = icvf_params['config']
-            value_def = create_icvf('multilinear', hidden_dims=[256, 256])
+            value_def = create_icvf('monolithic', hidden_dims=[512, 512, 512])
             agent = learner.create_learner(
                 seed=42, observations=np.ones((1, 29)),
                 value_def=value_def, **conf)
             agent = from_state_dict(agent, params)
-            self.icvf_fn = jax.jit(lambda a, b, c: agent.value(a, b, c).sum(0))
+            self.icvf_fn = jax.jit(lambda a, b, c: agent.value(a, b, c).mean(0))
             def icvf_repr_fn(obs):
                 return agent.value(obs, method='get_phi')
             def icvf_value_fn(obs, goal):
@@ -123,16 +115,6 @@ class NitishEnv(AntMazeEnv):
         obs, reward, done, info = super().step(action)
         self.state = obs
         
-        # add an RND bonus
-        if self.rnd_scale > 0:
-            bonus = self.rnd_scale * rnd_bonus(self.rnd, self.state.reshape(1, -1), action.reshape(1, -1))
-            b = bonus.reshape(-1)[0].item()
-            reward += b
-            if self.stepnum % self.rnd_update_freq == 0:
-                self.rnd_key, self.rnd, rnd_info = update_rnd(
-                    self.rnd_key, self.rnd, obs.reshape(1, -1), action.reshape(1, -1))
-            self.rnd_ep_bonus += b
-        
         if self.last_state is None:
             self.last_state = obs # account for first step
         
@@ -170,7 +152,6 @@ class NitishEnv(AntMazeEnv):
         self.sg_indx = 0
         self.state = obs
         self.stepnum = 0
-        self.rnd_ep_bonus = 0
         self.last_state = obs
         self.subgoals = self.SUBGOALS.copy()
         self.sg_gen_state = obs
