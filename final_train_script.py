@@ -140,13 +140,14 @@ def main(_):
     
     
     # Setup RND Parameters
-    rnd_update_freq = 1
-    start_rnd = 5000
-    rnd = create_rnd(29, 8, hidden_dims=[256, 256, 256], env=nitish_type, simple=True)
-    rnd_key = jax.random.PRNGKey(42)
-    rnd_ep_bonus = 0
-    rnd_ep_loss = 0
-    rnd_multiplier = 1.0 # float(1 / 10)
+    if FLAGS.use_rnd:
+        rnd_update_freq = 1
+        start_rnd = 5000
+        rnd = create_rnd(29, 8, hidden_dims=[256, 256, 256], env=nitish_type, simple=True)
+        rnd_key = jax.random.PRNGKey(42)
+        rnd_ep_bonus = 0
+        rnd_ep_loss = 0
+        rnd_multiplier = 1.0 # float(1 / 10)
     
     
     if use_icvf:
@@ -164,7 +165,7 @@ def main(_):
         conf = icvf_params['config']
         value_def = create_icvf('monolithic', hidden_dims=[512, 512, 512])
         icvf_agent = learner.create_learner(
-            seed=42, observations=np.ones((1, 29)),
+            seed=FLAGS.seed, observations=np.ones((1, 29)),
             value_def=value_def, **conf)
         icvf_agent = from_state_dict(icvf_agent, params)
         def icvf_value_fn(obs, goal):
@@ -271,8 +272,7 @@ def main(_):
                 batch = combine(offline_batch, online_batch)
             else:
                 batch = online_batch
-            
-            batch = unfreeze(online_batch)
+                batch = unfreeze(online_batch)
             
             if FLAGS.use_rnd and i > start_rnd:
                 bonus = rnd_multiplier * rnd_bonus(
