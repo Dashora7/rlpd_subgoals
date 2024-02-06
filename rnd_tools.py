@@ -6,29 +6,18 @@ from jaxrl_m.typing import *
 from flax.training.train_state import TrainState
 from src.icvf_networks import LayerNormMLP
 import chex
+from antmaze_stats import *
 
-oa_mean = np.array([3.9977181e+00, 7.0474000e+00, 4.9015650e-01, 6.3097394e-01,
- -2.0249341e-02,  1.2467855e-01, -1.7942959e-01,  3.6614746e-02,
-  7.0847946e-01,  6.1714683e-02, -7.7518719e-01, -1.1250293e-01,
- -6.9801414e-01,  3.1167228e-02,  7.3759615e-01,  4.2154718e-02,
-  1.1727795e-01, -6.3850585e-04, -5.2995738e-03,  1.9374553e-03,
- -1.3605792e-02, -2.4506841e-03,  1.6431838e-02, -2.4188210e-03,
- -1.5624404e-02,  1.6520927e-03, -1.6445911e-02,  6.4725121e-03,
-  1.5356019e-02,  3.7892323e-02, -3.0319202e-01,  6.2268957e-02,
- -3.6210087e-01,  6.7616254e-02,  2.3050579e-01, -1.8155356e-01,
-  4.0676609e-01])
-
-oa_std =  np.array([2.7836988,  3.1514142,  0.1570694,  0.41083026, 0.33011514, 0.34351712,
- 0.39814702, 0.45371208, 0.27702916, 0.4263024,  0.3027348,  0.42865035,
- 0.26848754, 0.4343063,  0.28686404, 0.8156437,  0.74574715, 0.6920502,
- 1.0524466,  1.0720621,  1.0845602,  2.4670615,  1.8190215,  2.7180765,
- 1.9189895,  2.7241614,  1.7706113,  2.4668434,  1.6986042,  0.79764515,
- 0.7433417,  0.84378815, 0.7249487,  0.7947736, 0.80010587, 0.812278,
- 0.71354556])
+simple_mean_std = {'umaze': (oa_mean_umaze, oa_std_umaze),
+            'medium': (oa_mean_med, oa_std_med),
+            'large': (oa_mean_hard, oa_std_hard)}
+mean_std = {}
+for k, v in simple_mean_std.items():
+    # insert the first two elements at the end of obs
+    mean_std[k] = ( np.insert(v[0], 29, v[0][:2]),  np.insert(v[1], 29, v[1][:2]) )
 
 def normalize(arr: jax.Array, mean: jax.Array, std: jax.Array, eps: float = 1e-8) -> jax.Array:
     return (arr - mean) / (std + eps)
-
 
 @chex.dataclass(frozen=True)
 class RunningMeanStd:
@@ -81,8 +70,12 @@ class RunningMeanStd:
 class RND(nn.Module):
     random_model: nn.Module
     predictive_model: nn.Module
+    env: str
+    simple: bool
     
     def __call__(self, state_action):
+        oa_mean, oa_std = simple_mean_std[self.env] if self.simple else mean_std[self.env]
+        
         state_action = normalize(state_action, oa_mean, oa_std)
         pred = self.predictive_model(state_action)
         target = self.random_model(state_action)
@@ -98,9 +91,8 @@ def rnd_bonus(
         action: jax.Array
 ) -> jax.Array:
     state_action = jnp.concatenate([state, action], axis=1)
-    
     pred, target = rnd.apply_fn(rnd.params, state_action)
-    bonus = jnp.sum((pred - target) ** 2, axis=1) / rnd.rms.std
+    bonus = jnp.mean((pred - target) ** 2, axis=1) / rnd.rms.std
     return bonus
 
 @jax.jit
@@ -126,16 +118,19 @@ def update_rnd(
 def create_rnd(
         state_dim: int,
         action_dim: int,
-        hidden_dims: Sequence[int] = (256, 256),
-        learning_rate: float = 1e-3,
+        env: str,
+        simple: bool,
+        hidden_dims: Sequence[int] = (256, 256, 256),
+        learning_rate: float = 3e-4,
         seed: int = 0,
 ) -> RNDTrainState:
     key = jax.random.PRNGKey(seed)
     key, rnd_key = jax.random.split(key)
     random_model = LayerNormMLP(hidden_dims=hidden_dims)
     predictive_model = LayerNormMLP(hidden_dims=hidden_dims)
-    rnd_module = RND(random_model, predictive_model)
-    params = rnd_module.init(rnd_key, jnp.ones((1, state_dim + action_dim)))
+    rnd_module = RND(random_model, predictive_model, env, simple)
+    inp_dim = state_dim + action_dim if simple else state_dim + action_dim + 2
+    params = rnd_module.init(rnd_key, jnp.ones((1, inp_dim)))
     return RNDTrainState.create(
         apply_fn=rnd_module.apply,
         params=params,

@@ -31,6 +31,12 @@ def icvf_heuristic(icvf_fn, batch, usefulness=1, reachability=1):
     # h = jnp.where(advantages < 0, float("-inf"), value )
     return h
 
+def icvf_heuristic_simple(icvf_fn, batch, usefulness=1, reachability=1):
+    obs = batch["observations"]
+    subgoal = batch["actions"]
+    goal = batch["goals"]
+    return icvf_fn(obs, subgoal, goal)
+
 def select_subgoal(agent, icvf_fn, obs, goal, n=50, t=1):
     sg_samples = generate_subgoal(agent, obs, goal, t=t, n=n)
     batch = {} # repeat obses and goals, and use subgoals as actions
