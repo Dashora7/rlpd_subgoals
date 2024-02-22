@@ -21,7 +21,7 @@ class WANDBVideo(gym.Wrapper):
     ):
         super().__init__(env)
         assert not nitish_env or nitish_type is not None, "Need to provide nitish_type if using nitish env!"
-        assert nitish_type in ['small', 'medium', 'large'], "Nitish type must be small, medium, or large!"
+        assert not nitish_env or nitish_type in ['small', 'medium', 'large'], "Nitish type must be small, medium, or large!"
         self._name = name
         self._nitish_env = nitish_env
         self._nitish_type = nitish_type
@@ -43,6 +43,8 @@ class WANDBVideo(gym.Wrapper):
                 self._video.append(obs["pixels"][..., -1])
             else:
                 self._video.append(obs["pixels"])
+        elif isinstance(obs, np.ndarray) and obs.ndim == 3:
+            self._video.append(obs)
         else:
             if self._nitish_env:
                 if self.env.viewer is not None:

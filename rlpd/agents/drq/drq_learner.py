@@ -9,6 +9,7 @@ import jax
 import optax
 from flax import struct
 from flax.training.train_state import TrainState
+from flax.core import copy
 
 from rlpd.agents.drq.augmentations import batched_random_crop
 from rlpd.agents.sac.sac_learner import SACLearner
@@ -27,13 +28,13 @@ def _unpack(batch):
             obs_pixels = batch["observations"][pixel_key][..., :-1]
             next_obs_pixels = batch["observations"][pixel_key][..., 1:]
 
-            obs = batch["observations"].copy(add_or_replace={pixel_key: obs_pixels})
-            next_obs = batch["next_observations"].copy(
+            obs = copy(batch["observations"], add_or_replace={pixel_key: obs_pixels})
+            next_obs = copy(batch["next_observations"],
                 add_or_replace={pixel_key: next_obs_pixels}
             )
 
-    batch = batch.copy(
-        add_or_replace={"observations": obs, "next_observations": next_obs}
+    batch = copy(batch, add_or_replace={
+        "observations": obs, "next_observations": next_obs}
     )
 
     return batch
@@ -47,7 +48,7 @@ def _share_encoder(source, target):
             replacers[k] = v
 
     # Use critic conv layers in actor:
-    new_params = target.params.copy(add_or_replace=replacers)
+    new_params = copy(target.params, add_or_replace=replacers)
     return target.replace(params=new_params)
 
 
@@ -197,7 +198,7 @@ class DrQLearner(SACLearner):
         observations = self.data_augmentation_fn(key, batch["observations"])
         rng, key = jax.random.split(rng)
         next_observations = self.data_augmentation_fn(key, batch["next_observations"])
-        batch = batch.copy(
+        batch = copy(batch,
             add_or_replace={
                 "observations": observations,
                 "next_observations": next_observations,

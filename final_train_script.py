@@ -123,7 +123,6 @@ def main(_):
 
     eval_env = gym.make(FLAGS.env_name)
     
-    
     eval_env = wrap_gym(eval_env, rescale_actions=True)
     eval_env.seed(FLAGS.seed + 42)
 
@@ -152,8 +151,8 @@ def main(_):
     
     if use_icvf:
         start_icvf = 0
-        # icvf_multiplier = 0.001 # for value
-        icvf_multiplier = 0.1 # for potential
+        icvf_multiplier = 0.001 # for value
+        # icvf_multiplier = 0.1 # for potential
         icvf_ep_bonus = 0
         # make ICVF shaper in this file. See if it's faster    
         from src import icvf_learner as learner
@@ -172,7 +171,7 @@ def main(_):
             return icvf_agent.value(obs, goal, goal).mean(0)
         value_fn = jax.jit(icvf_value_fn)
         # Bonus function
-        def icvf_bonus(s, s_prime, goal, potential=True):
+        def icvf_bonus(s, s_prime, goal, potential=False):
             val_to_sg = value_fn(s_prime, goal)
             if potential:
                 last_val_to_sg = value_fn(s, goal)

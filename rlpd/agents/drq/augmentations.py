@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+from flax.core import copy
 
 
 def random_crop(key, img, padding):
@@ -15,4 +16,4 @@ def batched_random_crop(key, obs, pixel_key, padding=4):
     imgs = obs[pixel_key]
     keys = jax.random.split(key, imgs.shape[0])
     imgs = jax.vmap(random_crop, (0, 0, None))(keys, imgs, padding)
-    return obs.copy(add_or_replace={pixel_key: imgs})
+    return copy(obs, add_or_replace={pixel_key: imgs})

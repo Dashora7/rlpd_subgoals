@@ -3,6 +3,7 @@ from typing import Type
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+from flax.core import copy
 
 
 class Ensemble(nn.Module):
@@ -31,7 +32,7 @@ def subsample_ensemble(key: jax.random.PRNGKey, params, num_sample: int, num_qs:
             ens_params = jax.tree_util.tree_map(
                 lambda param: param[indx], params["Ensemble_0"]
             )
-            params = params.copy(add_or_replace={"Ensemble_0": ens_params})
+            params = copy(params, add_or_replace={"Ensemble_0": ens_params})
         else:
             params = jax.tree_util.tree_map(lambda param: param[indx], params)
     return params

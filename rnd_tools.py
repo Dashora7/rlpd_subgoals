@@ -7,14 +7,19 @@ from flax.training.train_state import TrainState
 from src.icvf_networks import LayerNormMLP
 import chex
 from antmaze_stats import *
+from cog_stats import *
+
 
 simple_mean_std = {'umaze': (oa_mean_umaze, oa_std_umaze),
             'medium': (oa_mean_med, oa_std_med),
-            'large': (oa_mean_hard, oa_std_hard)}
+            'large': (oa_mean_hard, oa_std_hard),
+            'pickplace': (o_mean_pickplace, o_std_pickplace)}
+
 mean_std = {}
 for k, v in simple_mean_std.items():
     # insert the first two elements at the end of obs
-    mean_std[k] = ( np.insert(v[0], 29, v[0][:2]),  np.insert(v[1], 29, v[1][:2]) )
+    if k in ['umaze', 'medium', 'large']:
+        mean_std[k] = ( np.insert(v[0], 29, v[0][:2]),  np.insert(v[1], 29, v[1][:2]) )
 
 def normalize(arr: jax.Array, mean: jax.Array, std: jax.Array, eps: float = 1e-8) -> jax.Array:
     return (arr - mean) / (std + eps)
@@ -75,7 +80,6 @@ class RND(nn.Module):
     
     def __call__(self, state_action):
         oa_mean, oa_std = simple_mean_std[self.env] if self.simple else mean_std[self.env]
-        
         state_action = normalize(state_action, oa_mean, oa_std)
         pred = self.predictive_model(state_action)
         target = self.random_model(state_action)

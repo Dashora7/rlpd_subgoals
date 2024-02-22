@@ -323,16 +323,6 @@ def main(_):
                         batch['observations'], batch['next_observations'], goals)
                     icvf_ep_bonus += bonus_rew_icvf.mean().item()
                     batch["rewards"] += np.array(bonus_rew_icvf)
-                
-                
-                """goal = jnp.concatenate(
-                    [envgoal, jnp.zeros(27)]).reshape(1, -1).repeat(
-                        batch['observations'].shape[0], axis=0)
-                bonus_rew_icvf = icvf_multiplier * icvf_bonus(
-                    batch['observations'], batch['next_observations'], goal)
-                icvf_ep_bonus += bonus_rew_icvf.mean().item()
-                batch["rewards"] += np.array(bonus_rew_icvf)
-                """
             
             if "antmaze" in FLAGS.env_name:
                 batch["rewards"] *= 10

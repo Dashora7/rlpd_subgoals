@@ -111,7 +111,7 @@ class NitishEnvSimple(AntMazeEnv):
 # Changed to not test. Ensure that we use eval for the eval env. Need right map
 
 
-mmaps = {'small': maze_env.U_MAZE_TEST, 'medium': maze_env.BIG_MAZE_TEST, 'large': maze_env.HARDEST_MAZE_TEST, 'large_multigoal': maze_env.HARDEST_MAZE}
+mmaps = {'small': maze_env.U_MAZE_TEST, 'medium': maze_env.BIG_MAZE_TEST, 'large': maze_env.HARDEST_MAZE_TEST, 'large_multigoal': maze_env.HARDEST_MAZE_EVAL}
 timeouts = {'small': 700, 'medium': 1000, 'large': 1000}
 ds_dict = {
     'small': 'http://rail.eecs.berkeley.edu/datasets/offline_rl/ant_maze_v2/Ant_maze_u-maze_noisy_multistart_False_multigoal_False_sparse_fixed.hdf5',
