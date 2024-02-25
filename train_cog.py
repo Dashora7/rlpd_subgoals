@@ -95,7 +95,8 @@ def main(_):
     wandb.config.update(FLAGS)
     
     envgoals = {
-        'pickplace': np.load('/home/dashora7/cog_misc_data/pickplace_goal_img.npy')
+        'pickplace': np.load('/home/dashora7/cog_misc_data/pickplace_goal_img.npy'),
+        'closeddrawer': np.load('/home/dashora7/cog_misc_data/drawer_goal_img.npy')
     }
     for k, v in envgoals.items():
         envgoals[k] = jnp.expand_dims(
@@ -129,7 +130,7 @@ def main(_):
         env_name_alt = "pickplace"
         cog_max_path_length = 40
     elif FLAGS.env_name == "Widow250DoubleDrawerOpenGraspNeutral-v0":
-        env_name_alt = "closeddrawer_small"
+        env_name_alt = "closeddrawer"
         cog_max_path_length = 50
     elif FLAGS.env_name == "Widow250DoubleDrawerCloseOpenGraspNeutral-v0":
         env_name_alt = "blockeddrawer1_small"
@@ -247,8 +248,6 @@ def main(_):
         def icvf_bonus(s, s_prime, goal, potential=False):
             assert len(s.shape) == 5
             N = s.shape[0]
-            s = jax.image.resize(
-                jnp.squeeze(s, axis=-1), (N, 128, 128, 3), 'bilinear')
             s_prime = jax.image.resize(
                 jnp.squeeze(s_prime, axis=-1), (N, 128, 128, 3), 'bilinear')
             val_to_sg = value_fn(s_prime, goal)
