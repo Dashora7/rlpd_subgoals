@@ -81,8 +81,6 @@ class COGWANDBVideo(gym.Wrapper):
             
             env_video = np.moveaxis(np.stack(self._video), -1, 1)
             plot_video = np.moveaxis(np.stack(self._plotvideo), -1, 1)
-            # TODO: print out axes and ensure we are on the right concat
-            print(env_video.shape, plot_video.shape)
             video = np.concatenate([env_video, plot_video], axis=-1)
             
             if video.shape[1] == 1:
