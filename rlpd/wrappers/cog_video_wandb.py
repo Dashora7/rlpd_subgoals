@@ -1,5 +1,5 @@
 from typing import Optional
-
+from PIL import Image
 import gym
 import numpy as np
 import matplotlib.pyplot as plt
@@ -14,7 +14,7 @@ class COGWANDBVideo(gym.Wrapper):
         pixel_hw: int = 200, # 84
         render_kwargs={},
         max_videos: Optional[int] = None,
-        vf: Optional[function] = None, # pass it in curried with goal
+        vf = None, # pass it in curried with goal
     ):
         super().__init__(env)
         self._name = name
@@ -46,15 +46,15 @@ class COGWANDBVideo(gym.Wrapper):
                     **self._render_kwargs
                 )
             )
-        
-        _, (ax1,)  = plt.subplots(1, 1, figsize=(6, 5))
+        # resize the video to 48x48
+        self._video[-1] = np.array(Image.fromarray(self._video[-1]).resize((300, 300)))
+        _, ax1  = plt.subplots(1, 1, figsize=(3, 3))
         line = ax1.plot([], [])[0]
         ax1.set_title('Value to Goal')
-        ax1.set_xlabel('Step')
-        ax1.set_ylabel('V(s, g, g)')
         ax1.set_xlim(0, 50)
-        ax1.set_ylim(-20, 5)
-        self._plotdata.append(self.vf(obs))
+        ax1.set_ylim(-15, 5)
+        s = self._video[-1][None, ..., None]
+        self._plotdata.append(self.vf(s, s))
         line.set_data(np.arange(len(self._plotdata)), self._plotdata)
         npimg = mplfig_to_npimage(plt.gcf())
         plt.close()
@@ -69,7 +69,6 @@ class COGWANDBVideo(gym.Wrapper):
         plt.close()
         obs = super().reset(**kwargs)
         self._add_frame(obs)
-        self._update_plot()
         return obs
 
 
@@ -83,7 +82,8 @@ class COGWANDBVideo(gym.Wrapper):
             env_video = np.moveaxis(np.stack(self._video), -1, 1)
             plot_video = np.moveaxis(np.stack(self._plotvideo), -1, 1)
             # TODO: print out axes and ensure we are on the right concat
-            video = np.concatenate([env_video, plot_video], axis=2)
+            print(env_video.shape, plot_video.shape)
+            video = np.concatenate([env_video, plot_video], axis=-1)
             
             if video.shape[1] == 1:
                 video = np.repeat(video, 3, 1)
@@ -106,4 +106,9 @@ def mplfig_to_npimage(fig):
     #  exports the canvas to a string buffer and then to a numpy nd.array
     buf = canvas.buffer_rgba()
     image = np.frombuffer(buf, dtype=np.uint8)
+    
+    # im_arr = image.reshape(h, w, 4)[..., :3] # to RGB
+    # img = Image.fromarray(im_arr)
+    # img.resize((48, 48), Image.ANTIALIAS)
+    # return np.array(img)
     return image.reshape(h, w, 4)[..., :3] # to RGB

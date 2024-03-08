@@ -257,7 +257,8 @@ def main(_):
             else:
                 return val_to_sg
         icvf_bonus = jax.jit(icvf_bonus, static_argnums=(3,))
-
+        curried_icvf = lambda s, s_prime: icvf_bonus(s, s_prime, goal_img)
+        
     # Training
     observation, done = env.reset(), False
 
@@ -368,7 +369,7 @@ def main(_):
                 eval_env,
                 num_episodes=FLAGS.eval_episodes,
                 save_video=FLAGS.save_video,
-                etype=False
+                vf=curried_icvf,
             )
 
             for k, v in eval_info.items():
