@@ -228,7 +228,7 @@ def main(_):
     goal_img = env.render_goal(env_name_alt)
     
     if use_icvf:
-        curried_icvf = lambda s, s_prime: icvf_bonus(s, s_prime, goal_img)
+        curried_icvf = lambda s, s_prime: icvf_bonus(s, s_prime, goal_img[None])
     
     for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1), smoothing=0.1, disable=not FLAGS.tqdm):
         if i < FLAGS.start_training:
@@ -279,7 +279,7 @@ def main(_):
             observation, done = env.reset(), False
             goal_img = env.render_goal(env_name_alt)
             if use_icvf:
-                curried_icvf = lambda s, s_prime: icvf_bonus(s, s_prime, goal_img)
+                curried_icvf = lambda s, s_prime: icvf_bonus(s, s_prime, goal_img[None])
             for k, v in info["episode"].items():
                 decode = {"r": "return", "l": "length", "t": "time"}
                 wandb.log({f"training/{decode[k]}": v}, step=i + FLAGS.pretrain_steps)

@@ -188,7 +188,7 @@ class DrQLearner(SACLearner):
     def update(self, batch: DatasetDict, utd_ratio: int):
         new_agent = self
 
-        if "pixels" not in batch["next_observations"]:
+        if 'pixels' not in batch["next_observations"] and 'image' not in batch["next_observations"]:
             batch = _unpack(batch)
 
         actor = _share_encoder(source=new_agent.critic, target=new_agent.actor)
