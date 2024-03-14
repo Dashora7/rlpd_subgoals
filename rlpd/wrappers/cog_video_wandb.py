@@ -30,11 +30,16 @@ class COGWANDBVideo(gym.Wrapper):
     def _add_frame(self, obs):
         if self._max_videos is not None and self._max_videos <= 0:
             return
-        if isinstance(obs, dict) and "pixels" in obs:
+        if isinstance(obs, dict) and ("pixels" in obs):
             if obs["pixels"].ndim == 4:
                 self._video.append(obs["pixels"][..., -1])
             else:
                 self._video.append(obs["pixels"])
+        elif isinstance(obs, dict) and ("image" in obs):
+            if obs["image"].ndim == 4:
+                self._video.append(obs["image"][..., -1])
+            else:
+                self._video.append(obs["image"])
         elif isinstance(obs, np.ndarray) and obs.ndim == 3:
             self._video.append(obs)
         else:    
