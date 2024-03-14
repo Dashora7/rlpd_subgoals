@@ -16,7 +16,7 @@ class MemoryEfficientReplayBuffer(ReplayBuffer):
         observation_space: gym.Space,
         action_space: gym.Space,
         capacity: int,
-        pixel_keys: Tuple[str, ...] = ("pixels",),
+        pixel_keys: Tuple[str, ...] = ("pixels",)
     ):
         self.pixel_keys = pixel_keys
 
