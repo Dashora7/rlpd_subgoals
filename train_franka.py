@@ -106,6 +106,7 @@ def main(_):
     if FLAGS.env_name == "KitchenMicrowaveV0":
         env_name_alt = "microwave"
         max_path_length = 50
+        goalpath = "/home/dashora7/franka_misc_data/newgoal_data.png"
     elif FLAGS.env_name == "KitchenSlideCabinetV0":
         env_name_alt = "slidecabinet"
         max_path_length = 50
@@ -170,8 +171,8 @@ def main(_):
         model_cls = kwargs.pop("model_cls")
         rnd = globals()[model_cls].create(
             FLAGS.seed + 123,
-            env._env.observation_space,
-            env._env.action_space,
+            env.observation_space,
+            env.action_space,
             pixel_keys=pixel_keys,
             **kwargs,
         )
@@ -179,7 +180,7 @@ def main(_):
         start_rnd = 5000
         rnd_ep_bonus = 0
         rnd_ep_loss = 0
-        rnd_multiplier = 1.0 # float(1 / 10)
+        rnd_multiplier = 10.0 # float(1 / 10), 10.0
     
     if use_icvf:
         start_icvf = 0
@@ -225,7 +226,11 @@ def main(_):
     # Training
     observation, done = env.reset(), False
     print('Observation shape:', observation['image'].shape)
+    
+    from PIL import Image
+    # goal_img = np.array(Image.open(goalpath).resize((128, 128)))
     goal_img = env.render_goal(env_name_alt)
+    
     
     if use_icvf:
         curried_icvf = lambda s, s_prime: icvf_bonus(s, s_prime, goal_img[None])
