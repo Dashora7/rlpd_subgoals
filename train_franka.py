@@ -105,41 +105,27 @@ def main(_):
     
     if FLAGS.env_name == "KitchenMicrowaveV0":
         env_name_alt = "microwave"
+        goalname = "microwave"
         max_path_length = 50
         goalpath = "/home/dashora7/franka_misc_data/newgoal_data.png"
     elif FLAGS.env_name == "KitchenSlideCabinetV0":
         env_name_alt = "slidecabinet"
+        goalname = "slide cabinet"
         max_path_length = 50
     elif FLAGS.env_name == "KitchenHingeCabinetV0":
         env_name_alt = "hingecabinet"
+        goalname = "hinge cabinet"
         max_path_length = 50
-    
-    
-    
-    """
-    pixel_keys = ('image',)
-    env = KitchenEnv(envname=env_name_alt, reward_type='sparse')
-    env.render = types.MethodType(render, env)
-    env._env = TimeLimit(env._env, max_episode_steps=max_path_length)
-    env._env = RecordEpisodeStatistics(env._env, deque_size=1)
-    env._env.seed(FLAGS.seed)
-
-    eval_env = KitchenEnv(envname=env_name_alt)
-    eval_env.render = types.MethodType(render, eval_env)
-    eval_env._env = TimeLimit(eval_env._env, max_episode_steps=max_path_length)
-    eval_env._env.seed(FLAGS.seed + 42)
-    """
-    
     
     import gym
     pixel_keys = ('image',)
-    
-    env = gym.make('kitchen-microwave-v0')
+    envname = "kitchen-" + env_name_alt + "-v0"
+    env = gym.make(envname)
     env = TimeLimit(env, max_episode_steps=50)
     env = RecordEpisodeStatistics(env, deque_size=1)
     env.seed(FLAGS.seed)
     
-    eval_env = gym.make('kitchen-microwave-v0')
+    eval_env = gym.make(envname)
     eval_env = TimeLimit(eval_env, max_episode_steps=50)
     eval_env.seed(FLAGS.seed + 42)
 
@@ -180,7 +166,7 @@ def main(_):
         start_rnd = 5000
         rnd_ep_bonus = 0
         rnd_ep_loss = 0
-        rnd_multiplier = 10.0 # float(1 / 10), 10.0
+        rnd_multiplier = 20.0 # float(1 / 10), 10.0
     
     if use_icvf:
         start_icvf = 0
@@ -217,6 +203,8 @@ def main(_):
                 jnp.squeeze(s_prime, axis=-1), (N, 128, 128, 3), 'bilinear')
             val_to_sg = value_fn(s_prime, goal)
             if potential:
+                s = jax.image.resize(
+                    jnp.squeeze(s, axis=-1), (N, 128, 128, 3), 'bilinear')
                 last_val_to_sg = value_fn(s, goal)
                 return val_to_sg - last_val_to_sg
             else:
@@ -229,7 +217,7 @@ def main(_):
     
     from PIL import Image
     # goal_img = np.array(Image.open(goalpath).resize((128, 128)))
-    goal_img = env.render_goal(env_name_alt)
+    goal_img = env.render_goal(goalname)
     
     
     if use_icvf:
@@ -282,7 +270,7 @@ def main(_):
         
         if done:
             observation, done = env.reset(), False
-            goal_img = env.render_goal(env_name_alt)
+            goal_img = env.render_goal(goalname)
             if use_icvf:
                 curried_icvf = lambda s, s_prime: icvf_bonus(s, s_prime, goal_img[None])
             for k, v in info["episode"].items():
