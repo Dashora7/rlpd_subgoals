@@ -106,27 +106,26 @@ def main(_):
     if FLAGS.env_name == "KitchenMicrowaveV0":
         env_name_alt = "microwave"
         goalname = "microwave"
-        max_path_length = 50
+        #max_path_length = 50
         goalpath = "/home/dashora7/franka_misc_data/newgoal_data.png"
     elif FLAGS.env_name == "KitchenSlideCabinetV0":
         env_name_alt = "slidecabinet"
         goalname = "slide cabinet"
-        max_path_length = 50
+        #max_path_length = 50
     elif FLAGS.env_name == "KitchenHingeCabinetV0":
         env_name_alt = "hingecabinet"
         goalname = "hinge cabinet"
-        max_path_length = 50
+        #max_path_length = 50
     
     import gym
     pixel_keys = ('image',)
     envname = "kitchen-" + env_name_alt + "-v0"
     env = gym.make(envname)
-    env = TimeLimit(env, max_episode_steps=50)
     env = RecordEpisodeStatistics(env, deque_size=1)
     env.seed(FLAGS.seed)
     
     eval_env = gym.make(envname)
-    eval_env = TimeLimit(eval_env, max_episode_steps=50)
+    eval_env = TimeLimit(eval_env)
     eval_env.seed(FLAGS.seed + 42)
 
     if FLAGS.offline_ratio > 0:
