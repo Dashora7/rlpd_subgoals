@@ -56,7 +56,7 @@ class COGWANDBVideo(gym.Wrapper):
         _, ax1  = plt.subplots(1, 1, figsize=(3, 3))
         line = ax1.plot([], [])[0]
         ax1.set_title('Value to Goal')
-        ax1.set_xlim(0, 50)
+        ax1.set_xlim(0, 100)
         ax1.set_ylim(-15, 5)
         s = self._video[-1][None, ..., None]
         self._plotdata.append(self.vf(s, s))

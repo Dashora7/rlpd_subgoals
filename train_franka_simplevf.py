@@ -47,7 +47,7 @@ flags.DEFINE_boolean("tqdm", True, "Use tqdm progress bar.")
 flags.DEFINE_string("save_dir", "exp_data_franka", "Directory to save checkpoints.")
 flags.DEFINE_bool("checkpoint_model", False, "save model")
 flags.DEFINE_bool("checkpoint_buffer", False, "save replay buffer")
-flags.DEFINE_string("icvf_path", None, "model path.")
+flags.DEFINE_string("vf_path", None, "model path.")
 flags.DEFINE_boolean("use_rnd", False, "Use Random Network Distillation")
 flags.DEFINE_boolean("save_video", True, "Save videos")
 flags.DEFINE_integer("utd_ratio", 1, "Update to data ratio.")
@@ -87,14 +87,14 @@ def add_prefix(prefix, dict):
 
 def main(_):
     assert FLAGS.offline_ratio >= 0.0 and FLAGS.offline_ratio <= 1.0
-    use_icvf = FLAGS.icvf_path is not None
+    use_vf = FLAGS.vf_path is not None
     wandb.init(project=FLAGS.project_name, entity="dashora7")
     wandb.config.update(FLAGS)
 
     if FLAGS.save_dir is not None:
         log_dir = os.path.join(
             FLAGS.save_dir,
-            f"{FLAGS.env_name}-s{FLAGS.seed}-icvf_{use_icvf}-rnd_{FLAGS.use_rnd}",
+            f"{FLAGS.env_name}-s{FLAGS.seed}-vf_{use_vf}-rnd_{FLAGS.use_rnd}",
         )
         print("logging to", log_dir)
         if FLAGS.checkpoint_model:
@@ -108,7 +108,6 @@ def main(_):
         env_name_alt = "microwave"
         goalname = "microwave"
         # max_path_length = 50
-        goalpath = "/home/dashora7/franka_misc_data/ten-microwave.png"
     elif FLAGS.env_name == "KitchenSlideCabinetV0":
         env_name_alt = "slidecabinet"
         goalname = "slide cabinet"
@@ -168,60 +167,56 @@ def main(_):
         rnd_ep_loss = 0
         rnd_multiplier = 20.0 # float(1 / 10), 10.0
     
-    if use_icvf:
-        start_icvf = 0
-        icvf_multiplier = 0.001 # for value
-        # icvf_multiplier = 0.1 # for potential
-        icvf_ep_bonus = 0
+    if use_vf:
+        start_vf = 0
+        vf_multiplier = 0.001 # for value
+        # vf_multiplier = 0.1 # for potential
+        vf_ep_bonus = 0
         # make ICVF shaper in this file. See if it's faster    
         from src import icvf_learner as learner
-        from src.icvf_networks import create_icvf, ICVFViT, SqueezedLayerNormMLP
+        from src.icvf_networks import VFWithImage, SqueezedLayerNormMLP
         from jaxrl_m.vision import encoders
         from flax.serialization import from_state_dict
         
-        with tf.io.gfile.GFile(FLAGS.icvf_path, 'rb') as f:
-            icvf_params = pickle.load(f)
-        params = icvf_params['agent']
-        conf = icvf_params['config']
+        with tf.io.gfile.GFile(FLAGS.vf_path, 'rb') as f:
+            vf_params = pickle.load(f)
+        params = vf_params['agent']
+        conf = vf_params['config']
         hidden_dims = (256, 256)
-        icvf_def = ensemblize(SqueezedLayerNormMLP, 2)(hidden_dims + (1,))
+        vf_def = ensemblize(SqueezedLayerNormMLP, 2)(hidden_dims + (1,))
         encoder_def = encoders['ViT-B16']()
-        value_def = ICVFViT(encoder_def, icvf_def)
-        icvf_agent = learner.create_learner(
+        value_def = VFWithImage(encoder_def, vf_def)
+        vf_agent = learner.create_learner(
             seed=FLAGS.seed, observations=np.ones((1, 128, 128, 3)),
-            value_def=value_def, **conf)
-        icvf_agent = from_state_dict(icvf_agent, params)
+            value_def=value_def, simple_vf=True, **conf)
+        vf_agent = from_state_dict(vf_agent, params)
         
-        def icvf_value_fn(obs, goal):
-            return icvf_agent.value(obs, goal, goal, train=False).mean(0)
-        value_fn = jax.jit(icvf_value_fn)
+        def vf_value_fn(obs):
+            return vf_agent.value(obs, train=False).mean(0)
+        value_fn = jax.jit(vf_value_fn)
+        
         # Bonus function
-        def icvf_bonus(s, s_prime, goal, potential=False):
+        def vf_bonus(s, s_prime, potential=False):
             assert len(s.shape) == 5
             N = s.shape[0]
             s_prime = jax.image.resize(
                 jnp.squeeze(s_prime, axis=-1), (N, 128, 128, 3), 'bilinear')
-            val_to_sg = value_fn(s_prime, goal)
+            val_to_sg = value_fn(s_prime)
             if potential:
                 s = jax.image.resize(
                     jnp.squeeze(s, axis=-1), (N, 128, 128, 3), 'bilinear')
-                last_val_to_sg = value_fn(s, goal)
+                last_val_to_sg = value_fn(s)
                 return val_to_sg - last_val_to_sg
             else:
                 return val_to_sg
-        icvf_bonus = jax.jit(icvf_bonus, static_argnums=(3,))
+        vf_bonus = jax.jit(vf_bonus, static_argnums=(3,))
         
     # Training
     observation, done = env.reset(), False
     print('Observation shape:', observation['image'].shape)
     
-    
-    goal_img = np.array(Image.open(goalpath).resize((128, 128)))
-    # goal_img = env.render_goal(goalname)
-    
-    
-    if use_icvf:
-        curried_icvf = lambda s, s_prime: icvf_bonus(s, s_prime, goal_img[None])
+    if use_vf:
+        curried_vf = lambda s, s_prime: vf_bonus(s, s_prime)
     
     for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1), smoothing=0.1, disable=not FLAGS.tqdm):
         if i < FLAGS.start_training:
@@ -249,12 +244,12 @@ def main(_):
             loss = rnd_update_info['rnd_loss'].item()
             rnd_ep_loss += loss
         
-        if use_icvf and i > start_icvf:
-            bonus_rew_icvf = icvf_multiplier * icvf_bonus(
+        if use_vf and i > start_vf:
+            bonus_rew_vf = vf_multiplier * vf_bonus(
                 observation['image'][None],
-                next_observation['image'][None], goal_img[None])
-            reward += np.array(bonus_rew_icvf)
-            icvf_ep_bonus += bonus_rew_icvf.item()
+                next_observation['image'][None])
+            reward += np.array(bonus_rew_vf)
+            vf_ep_bonus += bonus_rew_vf.item()
         
         replay_buffer.insert(
             dict(
@@ -270,8 +265,8 @@ def main(_):
         
         if done:
             observation, done = env.reset(), False
-            if use_icvf:
-                curried_icvf = lambda s, s_prime: icvf_bonus(s, s_prime, goal_img[None])
+            if use_vf:
+                curried_vf = lambda s, s_prime: vf_bonus(s, s_prime)
             for k, v in info["episode"].items():
                 decode = {"r": "return", "l": "length", "t": "time"}
                 wandb.log({f"training/{decode[k]}": v}, step=i + FLAGS.pretrain_steps)
@@ -285,11 +280,11 @@ def main(_):
                     step=i + FLAGS.pretrain_steps)
                 rnd_ep_loss = 0
             
-            if use_icvf:
+            if use_vf:
                 wandb.log(
-                    {f"training/icvf_avg_bonus": icvf_ep_bonus / info["episode"]['l']},
+                    {f"training/vf_avg_bonus": vf_ep_bonus / info["episode"]['l']},
                     step=i + FLAGS.pretrain_steps)
-            icvf_ep_bonus = 0
+            vf_ep_bonus = 0
         
         
         if i >= FLAGS.start_training:
@@ -316,7 +311,7 @@ def main(_):
                 eval_env,
                 num_episodes=FLAGS.eval_episodes,
                 save_video=FLAGS.save_video,
-                vf=curried_icvf,
+                vf=curried_vf,
             )
 
             for k, v in eval_info.items():
