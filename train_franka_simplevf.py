@@ -244,13 +244,6 @@ def main(_):
             loss = rnd_update_info['rnd_loss'].item()
             rnd_ep_loss += loss
         
-        """if use_vf and i > start_vf:
-            bonus_rew_vf = vf_multiplier * vf_bonus(
-                observation['image'][None],
-                next_observation['image'][None])
-            reward += np.array(bonus_rew_vf)
-            vf_ep_bonus += bonus_rew_vf.item()"""
-        
         replay_buffer.insert(
             dict(
                 observations=observation,
@@ -301,10 +294,10 @@ def main(_):
             
             if use_vf and i > start_vf:
                 bonus_rew_vf = vf_multiplier * vf_bonus(
-                    observation['image'][None],
-                    next_observation['image'][None])
+                    batch['observations']['image'],
+                    batch['next_observations']['image'])
                 batch["rewards"] += np.array(bonus_rew_vf)
-                vf_ep_bonus += bonus_rew_vf.item()
+                vf_ep_bonus += bonus_rew_vf.mean().item()
             
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
             
