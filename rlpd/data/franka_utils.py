@@ -100,7 +100,7 @@ def get_franka_dataset(datasets, percentages, v4=False):
         dones_float=master_train_dict['dones_float'],
         actions=np.zeros_like(master_train_dict['dones_float']),
         rewards=np.zeros_like(master_train_dict['dones_float']),
-        masks=1.0 - master_train_dict['dones_float']
+        masks=np.ones_like(master_val_dict['dones_float'])
     )
     master_val_ds = Dataset.create(
         observations=master_val_dict['observations'],
@@ -108,7 +108,7 @@ def get_franka_dataset(datasets, percentages, v4=False):
         dones_float=master_val_dict['dones_float'],
         actions=np.zeros_like(master_val_dict['dones_float']),
         rewards=np.zeros_like(master_val_dict['dones_float']),
-        masks=1.0 - master_val_dict['dones_float']
+        masks=np.ones_like(master_val_dict['dones_float'])
     )
     return master_train_ds, master_val_ds
 
@@ -138,8 +138,6 @@ def get_franka_dataset_simple(datasets, percentages, v4=False):
     # join all the sets
     master_train_dict = {k: np.concatenate([d[k] for d in master_train_set], axis=0) for k in master_train_set[0].keys()}
     master_val_dict = {k: np.concatenate([d[k] for d in master_val_set], axis=0) for k in master_val_set[0].keys()}
-
-    
     # create datasets
     master_train_ds = Dataset.create(
         observations=master_train_dict['observations'],
@@ -147,7 +145,7 @@ def get_franka_dataset_simple(datasets, percentages, v4=False):
         dones_float=master_train_dict['dones_float'],
         actions=np.zeros_like(master_train_dict['dones_float']),
         rewards=master_train_dict['rewards'] - 1,
-        masks=1.0 - master_train_dict['dones_float']
+        masks=np.ones_like(master_train_dict['dones_float'])
     )
     master_val_ds = Dataset.create(
         observations=master_val_dict['observations'],
@@ -155,6 +153,6 @@ def get_franka_dataset_simple(datasets, percentages, v4=False):
         dones_float=master_val_dict['dones_float'],
         actions=np.zeros_like(master_val_dict['dones_float']),
         rewards=master_val_dict['rewards'] - 1,
-        masks=1.0 - master_val_dict['dones_float']
+        masks=np.ones_like(master_val_dict['dones_float'])
     )
     return master_train_ds, master_val_ds

@@ -175,7 +175,7 @@ def main(_):
         icvf_ep_bonus = 0
         # make ICVF shaper in this file. See if it's faster    
         from src import icvf_learner as learner
-        from src.icvf_networks import create_icvf, ICVFViT, SqueezedLayerNormMLP
+        from src.icvf_networks import create_icvf, ICVFViT, ICVFWithEncoder, SqueezedLayerNormMLP, MonolithicVF
         from jaxrl_m.vision import encoders
         from flax.serialization import from_state_dict
         
@@ -184,9 +184,15 @@ def main(_):
         params = icvf_params['agent']
         conf = icvf_params['config']
         hidden_dims = (256, 256)
-        icvf_def = ensemblize(SqueezedLayerNormMLP, 2)(hidden_dims + (1,))
-        encoder_def = encoders['ViT-B16']()
-        value_def = ICVFViT(encoder_def, icvf_def)
+        
+        # icvf_def = ensemblize(SqueezedLayerNormMLP, 2)(hidden_dims + (1,))
+        # encoder_def = encoders['ViT-B16']()
+        # value_def = ICVFViT(encoder_def, icvf_def)
+        
+        vf_def = ensemblize(MonolithicVF, 2)(hidden_dims)
+        encoder_def = encoders['atari']()
+        value_def = ICVFWithEncoder(encoder_def, vf_def)
+        
         icvf_agent = learner.create_learner(
             seed=FLAGS.seed, observations=np.ones((1, 128, 128, 3)),
             value_def=value_def, **conf)

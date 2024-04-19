@@ -8,6 +8,7 @@ from ml_collections import config_flags
 from flax.training import checkpoints
 
 from PIL import Image
+from flax.serialization import from_state_dict
 import wandb
 from rlpd.data import MemoryEfficientReplayBuffer, ReplayBuffer
 from rlpd.evaluation import evaluate
@@ -51,7 +52,7 @@ flags.DEFINE_string("vf_path", None, "model path.")
 flags.DEFINE_boolean("use_rnd", False, "Use Random Network Distillation")
 flags.DEFINE_boolean("save_video", True, "Save videos")
 flags.DEFINE_integer("utd_ratio", 1, "Update to data ratio.")
-
+flags.DEFINE_string("offline_rnd_path", None, "Path to offline RND model for data support constraint.")
 config_flags.DEFINE_config_file(
     "config",
     "configs/rlpd_pixels_config.py",
@@ -88,6 +89,7 @@ def add_prefix(prefix, dict):
 def main(_):
     assert FLAGS.offline_ratio >= 0.0 and FLAGS.offline_ratio <= 1.0
     use_vf = FLAGS.vf_path is not None
+    use_offline_rnd = FLAGS.offline_rnd_path is not None
     wandb.init(project=FLAGS.project_name, entity="dashora7")
     wandb.config.update(FLAGS)
 
@@ -167,24 +169,30 @@ def main(_):
         rnd_ep_loss = 0
         rnd_multiplier = 20.0 # float(1 / 10), 10.0
     
+    vf_ep_bonus = 0
+    start_vf = 0
+    vf_multiplier = 0.001 # for value
+    # vf_multiplier = 0.1 # for potential
+    
     if use_vf:
-        start_vf = 0
-        vf_multiplier = 0.001 # for value
-        # vf_multiplier = 0.1 # for potential
-        vf_ep_bonus = 0
         # make ICVF shaper in this file. See if it's faster    
         from src import icvf_learner as learner
-        from src.icvf_networks import VFWithImage, SqueezedLayerNormMLP
+        from src.icvf_networks import VFWithImage, SqueezedLayerNormMLP, SimpleVF
         from jaxrl_m.vision import encoders
-        from flax.serialization import from_state_dict
         
         with tf.io.gfile.GFile(FLAGS.vf_path, 'rb') as f:
             vf_params = pickle.load(f)
         params = vf_params['agent']
         conf = vf_params['config']
         hidden_dims = (256, 256)
-        vf_def = ensemblize(SqueezedLayerNormMLP, 2)(hidden_dims + (1,))
-        encoder_def = encoders['ViT-B16']()
+        
+        # vf_def = ensemblize(SqueezedLayerNormMLP, 2)(hidden_dims + (1,))
+        # encoder_def = encoders['ViT-B16']()
+        # value_def = ICVFViT(encoder_def, icvf_def)
+        
+        vf_def = ensemblize(SimpleVF, 2)(hidden_dims)# + (1,))
+        encoder_def = encoders['atari']()
+        
         value_def = VFWithImage(encoder_def, vf_def)
         vf_agent = learner.create_learner(
             seed=FLAGS.seed, observations=np.ones((1, 128, 128, 3)),
@@ -209,14 +217,41 @@ def main(_):
                 return val_to_sg - last_val_to_sg
             else:
                 return val_to_sg
-        vf_bonus = jax.jit(vf_bonus, static_argnums=(3,))
+        vf_bonus = jax.jit(vf_bonus, static_argnums=(2,))
+    
+    if use_offline_rnd:
+        off_rnd_multiplier = 10.0
+        off_rnd_ep_penalty = 0
+        kwargs = dict(FLAGS.rnd_config)
+        model_cls = kwargs.pop("model_cls")
+        off_rnd = globals()[model_cls].create(
+            FLAGS.seed + 123,
+            env.observation_space,
+            env.action_space,
+            pixel_keys=pixel_keys,
+            **kwargs,
+        )
+        with tf.io.gfile.GFile(FLAGS.offline_rnd_path, 'rb') as f:
+            rnd_params = pickle.load(f)
+        off_rnd = from_state_dict(off_rnd, rnd_params)
         
+        def rnd_viz(s):
+            assert len(s.shape) == 5
+            N = s.shape[0]
+            s = jax.image.resize(
+                jnp.squeeze(s, axis=-1), (N, 128, 128, 3), 'bilinear')
+            dic = freeze({"observations": {'image': s[..., None]}})
+            return -1 * off_rnd.get_reward(dic) * (off_rnd_multiplier / vf_multiplier) # make same scale for viz
+    else:
+        rnd_viz = None
     # Training
     observation, done = env.reset(), False
     print('Observation shape:', observation['image'].shape)
     
     if use_vf:
         curried_vf = lambda s, s_prime: vf_bonus(s, s_prime)
+    else:
+        curried_vf = None
     
     for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1), smoothing=0.1, disable=not FLAGS.tqdm):
         if i < FLAGS.start_training:
@@ -272,7 +307,11 @@ def main(_):
                     {f"training/rnd_avg_loss": rnd_ep_loss / info["episode"]['l']},
                     step=i + FLAGS.pretrain_steps)
                 rnd_ep_loss = 0
-            
+            if use_offline_rnd:
+                wandb.log(
+                    {f"training/off_rnd_avg_penalty": off_rnd_ep_penalty / info["episode"]['l']},
+                    step=i + FLAGS.pretrain_steps)
+                off_rnd_ep_penalty = 0
             if use_vf:
                 wandb.log(
                     {f"training/vf_avg_bonus": vf_ep_bonus / info["episode"]['l']},
@@ -291,6 +330,11 @@ def main(_):
                 bonus = rnd_multiplier * rnd.get_reward(freeze(online_batch))
                 rnd_ep_bonus += bonus.mean().item()
                 batch["rewards"] += np.array(bonus)
+            
+            if use_offline_rnd:
+                bonus = off_rnd_multiplier * off_rnd.get_reward(freeze(online_batch))
+                off_rnd_ep_penalty += -1 * bonus.mean().item()
+                batch["rewards"] += -1 * np.array(bonus)
             
             if use_vf and i > start_vf:
                 bonus_rew_vf = vf_multiplier * vf_bonus(
@@ -312,6 +356,7 @@ def main(_):
                 num_episodes=FLAGS.eval_episodes,
                 save_video=FLAGS.save_video,
                 vf=curried_vf,
+                rnd=rnd_viz
             )
 
             for k, v in eval_info.items():

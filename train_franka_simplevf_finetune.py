@@ -22,7 +22,7 @@ from jaxrl_m.networks import ensemblize
 from jaxrl_m.common import shard_batch
 import tensorflow as tf
 import time
-
+import copy
 ### cog imports ###
 from envs import KitchenEnv
 from gym.wrappers import TimeLimit, FilterObservation, RecordEpisodeStatistics
@@ -91,7 +91,7 @@ def add_prefix(prefix, dict):
 
 def main(_):
     assert FLAGS.offline_icvf_ratio >= 0.0 and FLAGS.offline_icvf_ratio <= 1.0
-    use_vf = FLAGS.vf_path is not None
+    use_vf = True # FLAGS.vf_path is not None
     wandb.init(project=FLAGS.project_name, entity="dashora7")
     wandb.config.update(FLAGS)
 
@@ -153,7 +153,7 @@ def main(_):
     # ["microwave_custom_reset"]
     
     offline_ds, _ = franka_utils.get_franka_dataset_simple(
-        ["microwave-optonly-reset"], [1.0], v4=True
+        ["microwave_custom_reset"], [1.0], v4=True
     )
     example_batch = offline_ds.sample(2)
 
@@ -194,22 +194,32 @@ def main(_):
         vf_ep_bonus = 0
         # make ICVF shaper in this file. See if it's faster    
         from src import icvf_learner as learner
-        from src.icvf_networks import VFWithImage, SqueezedLayerNormMLP
+        from src.icvf_networks import VFWithImage, SqueezedLayerNormMLP, SimpleVF
         from jaxrl_m.vision import encoders
         from flax.serialization import from_state_dict
         
-        with tf.io.gfile.GFile(FLAGS.vf_path, 'rb') as f:
-            vf_params = pickle.load(f)
-        params = vf_params['agent']
-        conf = vf_params['config']
         hidden_dims = (256, 256)
-        vf_def = ensemblize(SqueezedLayerNormMLP, 2)(hidden_dims + (1,))
-        encoder_def = encoders['ViT-B16']()
-        value_def = VFWithImage(encoder_def, vf_def)
-        vf_agent = learner.create_learner(
-            seed=FLAGS.seed, observations=np.ones((1, 128, 128, 3)),
-            value_def=value_def, simple_vf=True, **conf)
-        vf_agent = from_state_dict(vf_agent, params)
+        if FLAGS.vf_path is not None:
+            with tf.io.gfile.GFile(FLAGS.vf_path, 'rb') as f:
+                vf_params = pickle.load(f)
+            params = vf_params['agent']
+            conf = vf_params['config']
+            # vf_def = ensemblize(SqueezedLayerNormMLP, 2)(hidden_dims + (1,))
+            # encoder_def = encoders['ViT-B16']()
+            vf_def = ensemblize(SimpleVF, 2)(hidden_dims)# + (1,))
+            encoder_def = encoders['atari']()
+            value_def = VFWithImage(encoder_def, vf_def)
+            vf_agent = learner.create_learner(
+                seed=FLAGS.seed, observations=np.ones((1, 128, 128, 3)),
+                value_def=value_def, simple_vf=True, **conf)
+            vf_agent = from_state_dict(vf_agent, params)
+        else:
+            vf_def = ensemblize(SimpleVF, 2)(hidden_dims)# + (1,))
+            encoder_def = encoders['atari']()
+            value_def = VFWithImage(encoder_def, vf_def)
+            vf_agent = learner.create_learner(
+                seed=FLAGS.seed, observations=np.ones((1, 128, 128, 3)),
+                value_def=value_def, simple_vf=True)
         
         def vf_value_fn(obs):
             return vf_agent.value(obs, train=False).mean(0)
@@ -229,7 +239,7 @@ def main(_):
                 return val_to_sg - last_val_to_sg
             else:
                 return val_to_sg
-        vf_bonus = jax.jit(vf_bonus, static_argnums=(3,))
+        vf_bonus = jax.jit(vf_bonus, static_argnums=(2,))
         
     # Training
     observation, done = env.reset(), False
@@ -248,6 +258,8 @@ def main(_):
         if not done or "TimeLimit.truncated" in info:
             mask = 1.0
         else:
+            print("THIS SHOULD NOT HAPPEN")
+            import sys; sys.exit(0)
             mask = 0.0
         
         if FLAGS.use_rnd and i % rnd_update_freq == 0:
@@ -314,7 +326,7 @@ def main(_):
                 vf_online['observations'] = vf_online['observations']['image'][..., 0]
                 vf_online['next_observations'] = vf_online['next_observations']['image'][..., 0]
                 vf_online['rewards'] -= 1
-                # vfbatch = combine(offline_batch, vf_online)
+                
                 vf_agent, update_info = vf_agent.update_single(vf_online)
                 if i % FLAGS.log_interval == 0:
                     for k, v in update_info.items():
@@ -323,12 +335,17 @@ def main(_):
                 if i % FLAGS.log_interval == 0:
                     for k, v in update_info.items():
                         wandb.log({f"training_offline_vf/{k}": v}, step=i + FLAGS.pretrain_steps)
-                
+
             ## UPDATE AGENT ##
+            # every n steps, refresh RB. this should speed up training
+            # add visualization of value across fails and success
+            # Run RLPD experiments
+            # TODO: Using less data for speed up! Ensure fair comparison!
             online_batch = online_replay_buffer.sample(
-                int(FLAGS.batch_size * FLAGS.utd_ratio)
+                int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_icvf_ratio))
             )
             batch = unfreeze(online_batch)
+            
             if FLAGS.use_rnd and i > start_rnd:
                 bonus = rnd_multiplier * rnd.get_reward(freeze(online_batch))
                 rnd_ep_bonus += bonus.mean().item()
@@ -339,7 +356,8 @@ def main(_):
                     batch['next_observations']['image'])
                 batch["rewards"] += np.array(bonus_rew_vf)
                 vf_ep_bonus += bonus_rew_vf.mean().item()
-            agent, update_info = agent.update(batch, FLAGS.utd_ratio)
+            
+            agent, update_info = agent.update(freeze(batch), FLAGS.utd_ratio)
             if i % FLAGS.log_interval == 0:
                 for k, v in update_info.items():
                     wandb.log({f"training/{k}": v}, step=i + FLAGS.pretrain_steps)
