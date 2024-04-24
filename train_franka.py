@@ -221,13 +221,12 @@ def main(_):
     observation, done = env.reset(), False
     print('Observation shape:', observation['image'].shape)
     
-    
-    goal_img = np.array(Image.open(goalpath).resize((128, 128)))
-    # goal_img = env.render_goal(goalname)
-    
-    
     if use_icvf:
+        goal_img = np.array(Image.open(goalpath).resize((128, 128)))
+        # goal_img = env.render_goal(goalname)
         curried_icvf = lambda s, s_prime: icvf_bonus(s, s_prime, goal_img[None])
+    else:
+        curried_icvf = None
     
     for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1), smoothing=0.1, disable=not FLAGS.tqdm):
         if i < FLAGS.start_training:
