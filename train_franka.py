@@ -108,7 +108,8 @@ def main(_):
         env_name_alt = "microwave"
         goalname = "microwave"
         # max_path_length = 50
-        goalpath = "/home/dashora7/franka_misc_data/ten-microwave.png"
+        # goalpath = "/home/dashora7/franka_misc_data/ten-microwave.png"
+        goalpath = "/home/dashora7/franka_misc_data/microwave_img.png"
     elif FLAGS.env_name == "KitchenSlideCabinetV0":
         env_name_alt = "slidecabinet"
         goalname = "slide cabinet"
@@ -219,8 +220,7 @@ def main(_):
         
     # Training
     observation, done = env.reset(), False
-    print('Observation shape:', observation['image'].shape)
-    
+ 
     if use_icvf:
         goal_img = np.array(Image.open(goalpath).resize((128, 128)))
         # goal_img = env.render_goal(goalname)

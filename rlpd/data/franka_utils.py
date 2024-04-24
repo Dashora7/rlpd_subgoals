@@ -98,7 +98,7 @@ def get_franka_dataset(datasets, percentages, v4=False):
         observations=master_train_dict['observations'],
         next_observations=master_train_dict['next_observations'],
         dones_float=master_train_dict['dones_float'],
-        actions=np.zeros_like(master_train_dict['dones_float']),
+        actions=master_train_dict['actions'],
         rewards=np.zeros_like(master_train_dict['dones_float']),
         masks=np.ones_like(master_val_dict['dones_float'])
     )
@@ -106,7 +106,7 @@ def get_franka_dataset(datasets, percentages, v4=False):
         observations=master_val_dict['observations'],
         next_observations=master_val_dict['next_observations'],
         dones_float=master_val_dict['dones_float'],
-        actions=np.zeros_like(master_val_dict['dones_float']),
+        actions=master_val_dict['actions'],
         rewards=np.zeros_like(master_val_dict['dones_float']),
         masks=np.ones_like(master_val_dict['dones_float'])
     )
@@ -143,7 +143,7 @@ def get_franka_dataset_simple(datasets, percentages, v4=False):
         observations=master_train_dict['observations'],
         next_observations=master_train_dict['next_observations'],
         dones_float=master_train_dict['dones_float'],
-        actions=np.zeros_like(master_train_dict['dones_float']),
+        actions=master_train_dict['actions'],
         rewards=master_train_dict['rewards'] - 1,
         masks=np.ones_like(master_train_dict['dones_float'])
     )
@@ -151,7 +151,7 @@ def get_franka_dataset_simple(datasets, percentages, v4=False):
         observations=master_val_dict['observations'],
         next_observations=master_val_dict['next_observations'],
         dones_float=master_val_dict['dones_float'],
-        actions=np.zeros_like(master_val_dict['dones_float']),
+        actions=master_val_dict['actions'],
         rewards=master_val_dict['rewards'] - 1,
         masks=np.ones_like(master_val_dict['dones_float'])
     )
