@@ -51,7 +51,7 @@ flags.DEFINE_string("icvf_path", None, "model path.")
 flags.DEFINE_boolean("use_rnd", False, "Use Random Network Distillation")
 flags.DEFINE_boolean("save_video", True, "Save videos")
 flags.DEFINE_integer("utd_ratio", 1, "Update to data ratio.")
-
+flags.DEFINE_string("offline_rnd_path", None, "Path to offline RND model for data support constraint.")
 config_flags.DEFINE_config_file(
     "config",
     "configs/rlpd_pixels_config.py",
@@ -88,6 +88,7 @@ def add_prefix(prefix, dict):
 def main(_):
     assert FLAGS.offline_ratio >= 0.0 and FLAGS.offline_ratio <= 1.0
     use_icvf = FLAGS.icvf_path is not None
+    use_offline_rnd = FLAGS.offline_rnd_path is not None
     wandb.init(project=FLAGS.project_name, entity="dashora7")
     wandb.config.update(FLAGS)
 
@@ -151,6 +152,11 @@ def main(_):
         pixel_keys=pixel_keys,
         **kwargs,
     )
+    
+    vf_ep_bonus = 0
+    start_vf = 0
+    vf_multiplier = 0.001 # for value
+    # vf_multiplier = 0.1 # for potential
     
     # Setup RND Parameters
     if FLAGS.use_rnd:
@@ -217,7 +223,34 @@ def main(_):
             else:
                 return val_to_sg
         icvf_bonus = jax.jit(icvf_bonus, static_argnums=(3,))
+    
+    if use_offline_rnd:
+        off_rnd_multiplier = 10.0
+        off_rnd_ep_penalty = 0
+        kwargs = dict(FLAGS.rnd_config)
+        model_cls = kwargs.pop("model_cls")
+        off_rnd = globals()[model_cls].create(
+            FLAGS.seed + 123,
+            env.observation_space,
+            env.action_space,
+            pixel_keys=pixel_keys,
+            **kwargs,
+        )
+        with tf.io.gfile.GFile(FLAGS.offline_rnd_path, 'rb') as f:
+            rnd_params = pickle.load(f)
+        off_rnd = from_state_dict(off_rnd, rnd_params)
         
+        def rnd_viz(s):
+            assert len(s.shape) == 5
+            N = s.shape[0]
+            s = jax.image.resize(
+                jnp.squeeze(s, axis=-1), (N, 128, 128, 3), 'bilinear')
+            dic = freeze({"observations": {'image': s[..., None]}})
+            return -1 * off_rnd.get_reward(dic) * (off_rnd_multiplier / vf_multiplier) # make same scale for viz
+    else:
+        rnd_viz = None
+    
+    
     # Training
     observation, done = env.reset(), False
  
@@ -289,7 +322,11 @@ def main(_):
                     {f"training/rnd_avg_loss": rnd_ep_loss / info["episode"]['l']},
                     step=i + FLAGS.pretrain_steps)
                 rnd_ep_loss = 0
-            
+            if use_offline_rnd:
+                wandb.log(
+                    {f"training/off_rnd_avg_penalty": off_rnd_ep_penalty / info["episode"]['l']},
+                    step=i + FLAGS.pretrain_steps)
+                off_rnd_ep_penalty = 0
             if use_icvf:
                 wandb.log(
                     {f"training/icvf_avg_bonus": icvf_ep_bonus / info["episode"]['l']},
@@ -309,6 +346,11 @@ def main(_):
                 rnd_ep_bonus += bonus.mean().item()
                 batch["rewards"] += np.array(bonus)
             
+            if use_offline_rnd:
+                bonus = off_rnd_multiplier * off_rnd.get_reward(freeze(online_batch))
+                off_rnd_ep_penalty += -1 * bonus.mean().item()
+                batch["rewards"] += -1 * np.array(bonus)
+            
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
             
             if i % FLAGS.log_interval == 0:
@@ -322,6 +364,7 @@ def main(_):
                 num_episodes=FLAGS.eval_episodes,
                 save_video=FLAGS.save_video,
                 vf=curried_icvf,
+                rnd=rnd_viz
             )
 
             for k, v in eval_info.items():
