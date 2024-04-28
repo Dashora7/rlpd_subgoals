@@ -238,10 +238,12 @@ def main(_):
             offline_batch['observations'] = jax.image.resize(offline_batch['observations'], (N, 128, 128, 3), 'bilinear')
             offline_batch['next_observations'] = jax.image.resize(offline_batch['next_observations'], (N, 128, 128, 3), 'bilinear')
             if icvf_relabel:
-                bonus_rew_vf = icvf_multiplier * icvf_bonus(
-                    batch['observations']['image'],
-                    batch['next_observations']['image'])
-                offline_batch["rewards"] += np.array(bonus_rew_vf)
+                bonus_rew_icvf = icvf_multiplier * icvf_bonus(
+                    offline_batch['observations'][..., None],
+                    offline_batch['next_observations'][..., None],
+                    jnp.repeat(goal_img[None], N, axis=0),
+                )
+                offline_batch["rewards"] += np.array(bonus_rew_icvf)
                 
             offline_batch['observations'] = FrozenDict({'image': offline_batch['observations'][..., None]})
             offline_batch['next_observations'] = FrozenDict({'image': offline_batch['next_observations'][..., None]})
