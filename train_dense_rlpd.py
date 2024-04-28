@@ -226,11 +226,12 @@ def main(_):
                 wandb.log({f"training/{decode[k]}": v}, step=i)
         
         if i >= FLAGS.start_training:
-            
+            # Get online batch
             online_batch = unfreeze(online_replay_buffer.sample(
                 int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
             ))
-            # online_batch['rewards'] -= 1
+            online_batch['rewards'] -= 1
+            # Get offline batch
             offline_batch = offline_ds.sample(
                     int(FLAGS.batch_size * FLAGS.offline_ratio * FLAGS.utd_ratio)
             )
