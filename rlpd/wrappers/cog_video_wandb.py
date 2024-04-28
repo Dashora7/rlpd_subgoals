@@ -15,6 +15,7 @@ class COGWANDBVideo(gym.Wrapper):
         render_kwargs={},
         max_videos: Optional[int] = None,
         vf = None, # pass it in curried with goal
+        rnd = None,
     ):
         super().__init__(env)
         self._name = name
@@ -24,8 +25,10 @@ class COGWANDBVideo(gym.Wrapper):
         self._video = []
         self._plotdata = []
         self._plotvideo = []
+        self._rndplotdata = []
         self.lines = []
         self.vf = vf
+        self.rnd = rnd
 
     def _add_frame(self, obs):
         if self._max_videos is not None and self._max_videos <= 0:
@@ -53,26 +56,68 @@ class COGWANDBVideo(gym.Wrapper):
             )
         # resize the video to 48x48
         self._video[-1] = np.array(Image.fromarray(self._video[-1]).resize((300, 300)))
-        _, ax1  = plt.subplots(1, 1, figsize=(3, 3))
-        line = ax1.plot([], [])[0]
-        ax1.set_title('Value to Goal')
-        ax1.set_xlim(0, 100)
-        ax1.set_ylim(-15, 5)
-        s = self._video[-1][None, ..., None]
-        if self.vf is not None:
+       
+        if self.rnd is not None and self.vf is not None:
+            _, (ax1, ax2) = plt.subplots(1, 2, figsize=(5, 3))
+            line = ax1.plot([], [])[0]
+            rndline = ax2.plot([], [])[0]
+            ax1.set_title('Value to Goal')
+            ax1.set_xlim(0, 100)
+            ax1.set_ylim(-30, 2)
+            ax2.set_title('Offline RND Penalty')
+            ax2.set_xlim(0, 100)
+            ax2.set_ylim(-30, 2)
+            s = self._video[-1][None, ..., None]
             self._plotdata.append(self.vf(s, s))
+            line.set_data(np.arange(len(self._plotdata)), self._plotdata)
+            self._rndplotdata.append(self.rnd(s))
+            rndline.set_data(np.arange(len(self._rndplotdata)), self._rndplotdata)
+            npimg = mplfig_to_npimage(plt.gcf())
+            plt.close()
+            self._plotvideo.append(npimg)
+        elif self.vf is not None:
+            _, ax1  = plt.subplots(1, 1, figsize=(3, 3))
+            line = ax1.plot([], [])[0]
+            ax1.set_title('Value to Goal')
+            ax1.set_xlim(0, 100)
+            ax1.set_ylim(-30, 2)
+            s = self._video[-1][None, ..., None]
+            self._plotdata.append(self.vf(s, s))
+            line.set_data(np.arange(len(self._plotdata)), self._plotdata)
+            npimg = mplfig_to_npimage(plt.gcf())
+            plt.close()
+            self._plotvideo.append(npimg)
+        elif self.rnd is not None:
+            _, ax1  = plt.subplots(1, 1, figsize=(3, 3))
+            line = ax1.plot([], [])[0]
+            ax1.set_title('Offline RND Penalty')
+            ax1.set_xlim(0, 100)
+            ax1.set_ylim(-30, 2)
+            s = self._video[-1][None, ..., None]
+            self._plotdata.append(self.rnd(s))
+            line.set_data(np.arange(len(self._plotdata)), self._plotdata)
+            npimg = mplfig_to_npimage(plt.gcf())
+            plt.close()
+            self._plotvideo.append(npimg)
         else:
+            _, ax1  = plt.subplots(1, 1, figsize=(3, 3))
+            line = ax1.plot([], [])[0]
+            ax1.set_title('Value to Goal')
+            ax1.set_xlim(0, 100)
+            ax1.set_ylim(-30, 2)
+            s = self._video[-1][None, ..., None]
             self._plotdata.append(0)
-        line.set_data(np.arange(len(self._plotdata)), self._plotdata)
-        npimg = mplfig_to_npimage(plt.gcf())
-        plt.close()
-        self._plotvideo.append(npimg)
+            line.set_data(np.arange(len(self._plotdata)), self._plotdata)
+            npimg = mplfig_to_npimage(plt.gcf())
+            plt.close()
+            self._plotvideo.append(npimg)
 
 
     def reset(self, **kwargs):
         self._video.clear()
         self._plotdata.clear()
         self._plotvideo.clear()
+        self._rndplotdata.clear()
         self.lines = []
         plt.close()
         obs = super().reset(**kwargs)

@@ -8,10 +8,10 @@ from rlpd.wrappers.cog_video_wandb import COGWANDBVideo
 
 def evaluate(
     agent, env: gym.Env, num_episodes: int,
-    save_video: bool = False, vf=None
+    save_video: bool = False, vf=None, rnd = None
 ) -> Dict[str, float]:
     if save_video:
-        env = COGWANDBVideo(env, name="eval_video", max_videos=1, vf=vf)
+        env = COGWANDBVideo(env, name="eval_video", max_videos=1, vf=vf, rnd=rnd)
     env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=num_episodes)
     for i in range(num_episodes):
         observation, done = env.reset(), False

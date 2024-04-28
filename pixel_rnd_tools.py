@@ -136,7 +136,7 @@ class PixelRND(struct.PyTreeNode):
 
     @jax.jit
     def get_reward(self, batch):
-        if "pixels" not in batch["next_observations"] and 'image' not in batch["next_observations"]:
+        if "pixels" not in batch["observations"] and 'image' not in batch["observations"]:
             batch = _unpack(batch)
         feats = self.net.apply_fn({"params": self.net.params}, batch["observations"])
         frozen_feats = self.net.apply_fn(
