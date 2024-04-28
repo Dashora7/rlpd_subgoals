@@ -13,7 +13,15 @@ DATASETS = ["franka_microwave_ds",
             "nitish_microwave",
             "microwave_fewshot_reset",
             "microwave_custom_reset",
-            "microwave-optonly-reset"]
+            "microwave-optonly-reset",
+            "online_microwave_vf_ds",
+            "online_microwave_icvf_ds"]
+
+SEOHONG_SETS = {
+    "franka_microwave_ds": 0,
+    "franka_hingecabinet_ds": -0.5,
+    "franka_slidecabinet_ds": 0,
+}
 
 
 def get_franka_config():
@@ -29,7 +37,7 @@ def get_franka_config():
         'max_distance': ml_collections.config_dict.placeholder(int),
     })
 
-def split_dict_contiguous(d, percent_to_keep, ratio=0.8, rews=False):
+def split_dict_contiguous(d, percent_to_keep, ratio=0.8, rews=False, actions=False, thresh=None):
     terms = d['dones_float']
     stops = np.argwhere(terms).flatten().astype(int)
     partitions = np.split(np.arange(len(terms)), stops + 1)[:-1]
@@ -59,12 +67,17 @@ def split_dict_contiguous(d, percent_to_keep, ratio=0.8, rews=False):
     val_dict['dones_float'] = d['dones_float'][val_n_o_idxs]
     
     if rews:
+        if thresh is not None:
+            d['rewards'] = (d['rewards'] > thresh).astype(float)
         train_dict['rewards'] = d['rewards'][train_n_o_idxs]
         val_dict['rewards'] = d['rewards'][val_n_o_idxs]
+    if actions:
+        train_dict['actions'] = d['actions'][train_o_indxs]
+        val_dict['actions'] = d['actions'][val_o_indxs]
     
     return train_dict, val_dict
 
-def get_franka_dataset(datasets, percentages, v4=False):
+def get_franka_dataset(datasets, percentages, v4=False, offline=False):
     ROOT = "gs://rail-tpus-nitish-v3/franka/processed_data_resized"
     assert len(datasets) == len(percentages), "Invalid percentages provided"
     assert isinstance(datasets, list), "Invalid datasets provided"
@@ -73,6 +86,8 @@ def get_franka_dataset(datasets, percentages, v4=False):
     assert all([ds in DATASETS for ds in datasets]), "Invalid dataset provided"
     if v4:
         rootp = ROOT.replace('nitish-v3', 'nitish-v4')
+    elif offline:
+        rootp = "/nfs/kun2/users/dashora7/franka_datasets"
     else:
         rootp = ROOT
     # Load up each set
@@ -91,29 +106,28 @@ def get_franka_dataset(datasets, percentages, v4=False):
     # join all the sets
     master_train_dict = {k: np.concatenate([d[k] for d in master_train_set], axis=0) for k in master_train_set[0].keys()}
     master_val_dict = {k: np.concatenate([d[k] for d in master_val_set], axis=0) for k in master_val_set[0].keys()}
-
     
     # create datasets
     master_train_ds = Dataset.create(
         observations=master_train_dict['observations'],
         next_observations=master_train_dict['next_observations'],
         dones_float=master_train_dict['dones_float'],
-        actions=master_train_dict['actions'],
+        actions=np.zeros_like(master_train_dict['dones_float']),
         rewards=np.zeros_like(master_train_dict['dones_float']),
-        masks=np.ones_like(master_val_dict['dones_float'])
+        masks=np.ones_like(master_train_dict['dones_float'])
     )
     master_val_ds = Dataset.create(
         observations=master_val_dict['observations'],
         next_observations=master_val_dict['next_observations'],
         dones_float=master_val_dict['dones_float'],
-        actions=master_val_dict['actions'],
+        actions=np.zeros_like(master_val_dict['dones_float']),
         rewards=np.zeros_like(master_val_dict['dones_float']),
         masks=np.ones_like(master_val_dict['dones_float'])
     )
     return master_train_ds, master_val_ds
 
 
-def get_franka_dataset_simple(datasets, percentages, v4=False):
+def get_franka_dataset_simple(datasets, percentages, v4=False, offline=False):
     ROOT = "gs://rail-tpus-nitish-v3/franka/processed_data_resized"
     assert len(datasets) == len(percentages), "Invalid percentages provided"
     assert isinstance(datasets, list), "Invalid datasets provided"
@@ -122,6 +136,10 @@ def get_franka_dataset_simple(datasets, percentages, v4=False):
     assert all([ds in DATASETS for ds in datasets]), "Invalid dataset provided"
     if v4:
         rootp = ROOT.replace('nitish-v3', 'nitish-v4')
+    elif offline:
+        rootp = "/nfs/kun2/users/dashora7/franka_datasets"
+    else:
+        rootp = ROOT
     # Load up each set
     master_train_set = []
     master_val_set = []
@@ -130,29 +148,83 @@ def get_franka_dataset_simple(datasets, percentages, v4=False):
         with tf.io.gfile.GFile(fpath, 'rb') as file:
             datadict = np.load(file, allow_pickle=True).item()
             file.close()
-        # split into train/val
-        train_d, val_d = split_dict_contiguous(datadict, percentages[i], rews=True)
+        # split into train/val and configure reward transform
+        train_d, val_d = split_dict_contiguous(datadict, percentages[i], rews=True, thresh=SEOHONG_SETS.get(dset))
         master_train_set.append(train_d)
         master_val_set.append(val_d)
         
     # join all the sets
     master_train_dict = {k: np.concatenate([d[k] for d in master_train_set], axis=0) for k in master_train_set[0].keys()}
     master_val_dict = {k: np.concatenate([d[k] for d in master_val_set], axis=0) for k in master_val_set[0].keys()}
+    
     # create datasets
     master_train_ds = Dataset.create(
         observations=master_train_dict['observations'],
         next_observations=master_train_dict['next_observations'],
         dones_float=master_train_dict['dones_float'],
-        actions=master_train_dict['actions'],
+        actions=np.ones_like(master_train_dict['dones_float']),
         rewards=master_train_dict['rewards'] - 1,
         masks=np.ones_like(master_train_dict['dones_float'])
+        # masks= 1 - master_train_dict['dones_float']
     )
     master_val_ds = Dataset.create(
         observations=master_val_dict['observations'],
         next_observations=master_val_dict['next_observations'],
         dones_float=master_val_dict['dones_float'],
+        actions=np.ones_like(master_val_dict['dones_float']),
+        rewards=master_val_dict['rewards'] - 1,
+        masks=np.ones_like(master_val_dict['dones_float'])
+        # masks=1 - master_val_dict['dones_float']
+    )
+    return master_train_ds, master_val_ds
+
+def get_franka_dataset_rlpd(datasets, percentages, v4=False, offline=True):
+    ROOT = "gs://rail-tpus-nitish-v3/franka/processed_data_resized"
+    assert len(datasets) == len(percentages), "Invalid percentages provided"
+    assert isinstance(datasets, list), "Invalid datasets provided"
+    assert isinstance(percentages, list), "Invalid percentages provided"
+    assert len(datasets) > 0, "No datasets provided"
+    assert all([ds in DATASETS for ds in datasets]), "Invalid dataset provided"
+    if v4:
+        rootp = ROOT.replace('nitish-v3', 'nitish-v4')
+    elif offline:
+        rootp = "/nfs/kun2/users/dashora7/franka_datasets"
+    else:
+        rootp = ROOT
+    # Load up each set
+    master_train_set = []
+    master_val_set = []
+    for i, dset in enumerate(datasets):
+        fpath = os.path.join(rootp, dset + '.npy')
+        with tf.io.gfile.GFile(fpath, 'rb') as file:
+            datadict = np.load(file, allow_pickle=True).item()
+            file.close()
+        # split into train/val and configure reward transform
+        train_d, val_d = split_dict_contiguous(datadict, percentages[i], rews=True, actions=True, thresh=SEOHONG_SETS.get(dset))
+        master_train_set.append(train_d)
+        master_val_set.append(val_d)
+        
+    # join all the sets
+    master_train_dict = {k: np.concatenate([d[k] for d in master_train_set], axis=0) for k in master_train_set[0].keys()}
+    master_val_dict = {k: np.concatenate([d[k] for d in master_val_set], axis=0) for k in master_val_set[0].keys()}
+    
+    # create datasets
+    master_train_ds = Dataset.create(
+        observations=master_train_dict['observations'],
+        next_observations=master_train_dict['next_observations'],
+        dones=master_train_dict['dones_float'],
+        actions=master_train_dict['actions'],
+        rewards=master_train_dict['rewards'] - 1,
+        masks=np.ones_like(master_train_dict['dones_float'])
+        # masks= 1 - master_train_dict['dones_float']
+    )
+    master_val_ds = Dataset.create(
+        observations=master_val_dict['observations'],
+        next_observations=master_val_dict['next_observations'],
+        dones=master_val_dict['dones_float'],
         actions=master_val_dict['actions'],
         rewards=master_val_dict['rewards'] - 1,
         masks=np.ones_like(master_val_dict['dones_float'])
+        # masks=1 - master_val_dict['dones_float']
     )
     return master_train_ds, master_val_ds

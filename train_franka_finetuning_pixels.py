@@ -13,6 +13,7 @@ from rlpd.data import MemoryEfficientReplayBuffer, ReplayBuffer
 from rlpd.evaluation import evaluate
 from rlpd.wrappers import WANDBVideo, wrap_pixels
 import os
+import jax
 from rlpd.data import franka_utils
 from envs import KitchenEnv
 import gym
@@ -28,7 +29,7 @@ flags.DEFINE_integer("eval_episodes", 10, "Number of episodes used for evaluatio
 flags.DEFINE_integer("log_interval", 1000, "Logging interval.")
 flags.DEFINE_integer("eval_interval", 5000, "Eval interval.")
 flags.DEFINE_integer("batch_size", 256, "Mini batch size.")
-flags.DEFINE_integer("max_steps", int(1e6), "Number of training steps.")
+flags.DEFINE_integer("max_steps", int(5e5), "Number of training steps.")
 flags.DEFINE_integer(
     "start_training", int(5e3), "Number of training steps to start training."
 )
@@ -109,8 +110,8 @@ def main(_):
     )
     online_replay_buffer.seed(FLAGS.seed)
     
-    offline_ds, _ = franka_utils.get_franka_dataset_simple(
-        ["microwave_custom_reset"], [1.0], v4=True
+    offline_ds, _ = franka_utils.get_franka_dataset_rlpd(
+        ["franka_hingecabinet_ds"], [1.0], v4=False, offline=True
     )
     example_batch = offline_ds.sample(2)
 
@@ -169,9 +170,11 @@ def main(_):
             offline_batch = offline_ds.sample(
                     int(FLAGS.batch_size * FLAGS.offline_ratio * FLAGS.utd_ratio)
             )
-            offline_batch['observations'] = {'image': offline_batch['observations'][..., None]}
-            offline_batch['next_observations'] = {'image': offline_batch['next_observations'][..., None]}
-            
+            N = offline_batch['observations'].shape[0]
+            offline_batch['observations'] = jax.image.resize(offline_batch['observations'], (N, 128, 128, 3), 'bilinear')
+            offline_batch['next_observations'] = jax.image.resize(offline_batch['next_observations'], (N, 128, 128, 3), 'bilinear')
+            offline_batch['observations'] = FrozenDict({'image': offline_batch['observations'][..., None]})
+            offline_batch['next_observations'] = FrozenDict({'image': offline_batch['next_observations'][..., None]})
             batch = combine(offline_batch, online_batch)
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
 
