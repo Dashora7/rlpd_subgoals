@@ -1,74 +1,56 @@
 #! /usr/bin/env python
-import os
 import numpy as np
 import tqdm
 from absl import app, flags
+from flax.core.frozen_dict import unfreeze, freeze
 from flax.core import FrozenDict
 from ml_collections import config_flags
 from flax.training import checkpoints
 
-from PIL import Image
 import wandb
+from rlpd.agents import DrQLearner
 from rlpd.data import MemoryEfficientReplayBuffer, ReplayBuffer
 from rlpd.evaluation import evaluate
-from rlpd.wrappers import wrap_pixels
-from flax.core.frozen_dict import unfreeze, freeze
-from pixel_rnd_tools import PixelRND
-from rlpd.agents import DrQLearner
-import matplotlib.pyplot as plt
-import pickle
-from jaxrl_m.networks import ensemblize
-import tensorflow as tf
-import time
-
-### cog imports ###
-from envs import KitchenEnv
-from gym.wrappers import TimeLimit, FilterObservation, RecordEpisodeStatistics
-import types
+from rlpd.wrappers import WANDBVideo, wrap_pixels
+import os
 import jax
-import jax.numpy as jnp
+from rlpd.data import franka_utils
+from envs import KitchenEnv
+import gym
+from PIL import Image
+from gym.wrappers import TimeLimit, FilterObservation, RecordEpisodeStatistics
 
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("project_name", "online-franka", "wandb project name.")
-flags.DEFINE_string("env_name", "KitchenMicrowaveV0", "Environment name.")
-flags.DEFINE_float("offline_ratio", 0.0, "Offline ratio.")
+flags.DEFINE_string("env_name", "KitchenMicrowave-v0", "Environment name.")
+flags.DEFINE_float("offline_ratio", 0.5, "Offline ratio.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
-flags.DEFINE_integer("eval_episodes", 100, "Number of episodes used for evaluation.")
+flags.DEFINE_integer("eval_episodes", 10, "Number of episodes used for evaluation.")
 flags.DEFINE_integer("log_interval", 1000, "Logging interval.")
 flags.DEFINE_integer("eval_interval", 5000, "Eval interval.")
 flags.DEFINE_integer("batch_size", 256, "Mini batch size.")
-flags.DEFINE_integer("max_steps", 1000000, "Number of training steps.")
+flags.DEFINE_integer("max_steps", int(5e5), "Number of training steps.")
 flags.DEFINE_integer(
-    "start_training", 5000, "Number of training steps to start training."
+    "start_training", int(5e3), "Number of training steps to start training."
 )
-flags.DEFINE_integer("pretrain_steps", 0, "Number of offline updates.")
+flags.DEFINE_string('icvf_path', None, 'Path to the ICVF model to change reward.')
 flags.DEFINE_boolean("tqdm", True, "Use tqdm progress bar.")
-flags.DEFINE_string("save_dir", "exp_data_franka", "Directory to save checkpoints.")
-flags.DEFINE_bool("checkpoint_model", False, "save model")
-flags.DEFINE_bool("checkpoint_buffer", False, "save replay buffer")
-flags.DEFINE_string("icvf_path", None, "model path.")
-flags.DEFINE_boolean("use_rnd", False, "Use Random Network Distillation")
-flags.DEFINE_boolean("save_video", True, "Save videos")
+flags.DEFINE_boolean("save_video", True, "Save videos during evaluation.")
+flags.DEFINE_string("save_dir", None, "Directory to save checkpoints.")
 flags.DEFINE_integer("utd_ratio", 1, "Update to data ratio.")
-
 config_flags.DEFINE_config_file(
     "config",
-    "configs/rlpd_pixels_config.py",
-    "File path to the training hyperparameter configuration.",
-    lock_config=False,
-)
-config_flags.DEFINE_config_file(
-    "rnd_config",
-    "configs/pixel_rnd_config.py",
+    "configs/drq_config.py",
     "File path to the training hyperparameter configuration.",
     lock_config=False,
 )
 
 def combine(one_dict, other_dict):
     combined = {}
+
     for k, v in one_dict.items():
-        if isinstance(v, FrozenDict) or isinstance(v, dict):
+        if isinstance(v, FrozenDict):
             if len(v) == 0:
                 combined[k] = v
             else:
@@ -80,21 +62,18 @@ def combine(one_dict, other_dict):
             tmp[0::2] = v
             tmp[1::2] = other_dict[k]
             combined[k] = tmp
+
     return FrozenDict(combined)
 
-def add_prefix(prefix, dict):
-    return {prefix + k: v for k, v in dict.items()}
 
 def main(_):
-    assert FLAGS.offline_ratio >= 0.0 and FLAGS.offline_ratio <= 1.0
-    use_icvf = FLAGS.icvf_path is not None
+    icvf_relabel = False if FLAGS.icvf_path is None else True
     wandb.init(project=FLAGS.project_name, entity="dashora7")
     wandb.config.update(FLAGS)
-
     if FLAGS.save_dir is not None:
         log_dir = os.path.join(
             FLAGS.save_dir,
-            f"{FLAGS.env_name}-s{FLAGS.seed}-icvf_{use_icvf}-rnd_{FLAGS.use_rnd}",
+            f"{FLAGS.env_name}-s{FLAGS.seed}-rlpd",
         )
         print("logging to", log_dir)
         if FLAGS.checkpoint_model:
@@ -108,7 +87,7 @@ def main(_):
         env_name_alt = "microwave"
         goalname = "microwave"
         # max_path_length = 50
-        goalpath = "/home/dashora7/franka_misc_data/ten-microwave.png"
+        goalpath = "/home/dashora7/franka_misc_data/microwave_img.png"
     elif FLAGS.env_name == "KitchenSlideCabinetV0":
         env_name_alt = "slidecabinet"
         goalname = "slide cabinet"
@@ -117,7 +96,7 @@ def main(_):
         env_name_alt = "hingecabinet"
         goalname = "hinge cabinet"
         #max_path_length = 50
-    
+
     import gym
     pixel_keys = ('image',)
     envname = "kitchen-" + env_name_alt + "-v0"
@@ -129,17 +108,17 @@ def main(_):
     eval_env = TimeLimit(eval_env)
     eval_env.seed(FLAGS.seed + 42)
 
-    if FLAGS.offline_ratio > 0:
-        raise NotImplementedError("Offline data not implemented for Franka Envs")
-    
-    replay_buffer = MemoryEfficientReplayBuffer(
+    online_replay_buffer = MemoryEfficientReplayBuffer(
         env.observation_space, env.action_space, FLAGS.max_steps,
         pixel_keys=pixel_keys
     )
-    replay_buffer.seed(FLAGS.seed)
-
-    ########### MODELS ###########
+    online_replay_buffer.seed(FLAGS.seed)
     
+    offline_ds, _ = franka_utils.get_franka_dataset_rlpd(
+        ["franka_microwave_ds"], [1.0], v4=False, offline=True
+    )
+    example_batch = offline_ds.sample(2)
+
     # Crashes on some setups if agent is created before replay buffer.
     kwargs = dict(FLAGS.config)
     model_cls = kwargs.pop("model_cls")
@@ -151,24 +130,7 @@ def main(_):
         **kwargs,
     )
     
-    # Setup RND Parameters
-    if FLAGS.use_rnd:
-        kwargs = dict(FLAGS.rnd_config)
-        model_cls = kwargs.pop("model_cls")
-        rnd = globals()[model_cls].create(
-            FLAGS.seed + 123,
-            env.observation_space,
-            env.action_space,
-            pixel_keys=pixel_keys,
-            **kwargs,
-        )
-        rnd_update_freq = 1
-        start_rnd = 5000
-        rnd_ep_bonus = 0
-        rnd_ep_loss = 0
-        rnd_multiplier = 20.0 # float(1 / 10), 10.0
-    
-    if use_icvf:
+    if icvf_relabel:
         start_icvf = 0
         icvf_multiplier = 0.001 # for value
         # icvf_multiplier = 0.1 # for potential
@@ -177,7 +139,11 @@ def main(_):
         from src import icvf_learner as learner
         from src.icvf_networks import create_icvf, ICVFViT, SqueezedLayerNormMLP, MonolithicVF, ICVFWithEncoder
         from jaxrl_m.vision import encoders
+        from jaxrl_m.networks import ensemblize
         from flax.serialization import from_state_dict
+        import tensorflow as tf
+        import pickle
+        import jax.numpy as jnp
         
         with tf.io.gfile.GFile(FLAGS.icvf_path, 'rb') as f:
             icvf_params = pickle.load(f)
@@ -216,52 +182,32 @@ def main(_):
                 return val_to_sg
         icvf_bonus = jax.jit(icvf_bonus, static_argnums=(3,))
         
+    
     # Training
     observation, done = env.reset(), False
     print('Observation shape:', observation['image'].shape)
-    
-    
     goal_img = np.array(Image.open(goalpath).resize((128, 128)))
-    # goal_img = env.render_goal(goalname)
     
-    
-    if use_icvf:
-        curried_icvf = lambda s, s_prime: icvf_bonus(s, s_prime, goal_img[None])
-    
-    for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1), smoothing=0.1, disable=not FLAGS.tqdm):
+    for i in tqdm.tqdm(range(1, FLAGS.max_steps), smoothing=0.1, disable=not FLAGS.tqdm):
         if i < FLAGS.start_training:
             action = env.action_space.sample()
         else:
             action, agent = agent.sample_actions(observation)
         next_observation, reward, done, info = env.step(action)
-        
+
         if not done or "TimeLimit.truncated" in info:
             mask = 1.0
         else:
             mask = 0.0
         
-        if FLAGS.use_rnd and i % rnd_update_freq == 0:
-            rnd, rnd_update_info = rnd.update(
-                freeze({
-                    "observations": {k: ob[None] for k, ob in observation.items()},
-                    "actions": action[None],
-                    "next_observations": {k: ob[None] for k, ob in next_observation.items()},
-                    "rewards": np.array(reward)[None],
-                    "masks": np.array(mask)[None],
-                    "dones": np.array(done)[None],
-                })
-            )
-            loss = rnd_update_info['rnd_loss'].item()
-            rnd_ep_loss += loss
-        
-        if use_icvf:
+        if icvf_relabel:
             bonus_rew_icvf = icvf_multiplier * icvf_bonus(
                 observation['image'][None],
                 next_observation['image'][None], goal_img[None])
             reward += np.array(bonus_rew_icvf)
             icvf_ep_bonus += bonus_rew_icvf.item()
-        
-        replay_buffer.insert(
+
+        online_replay_buffer.insert(
             dict(
                 observations=observation,
                 actions=action,
@@ -272,76 +218,55 @@ def main(_):
             )
         )
         observation = next_observation
-        
+
         if done:
             observation, done = env.reset(), False
-            if use_icvf:
-                curried_icvf = lambda s, s_prime: icvf_bonus(s, s_prime, goal_img[None])
             for k, v in info["episode"].items():
                 decode = {"r": "return", "l": "length", "t": "time"}
-                wandb.log({f"training/{decode[k]}": v}, step=i + FLAGS.pretrain_steps)
-            if FLAGS.use_rnd:
-                wandb.log(
-                    {f"training/rnd_avg_bonus": rnd_ep_bonus / info["episode"]['l']},
-                    step=i + FLAGS.pretrain_steps)
-                rnd_ep_bonus = 0
-                wandb.log(
-                    {f"training/rnd_avg_loss": rnd_ep_loss / info["episode"]['l']},
-                    step=i + FLAGS.pretrain_steps)
-                rnd_ep_loss = 0
-            
-            if use_icvf:
-                wandb.log(
-                    {f"training/icvf_avg_bonus": icvf_ep_bonus / info["episode"]['l']},
-                    step=i + FLAGS.pretrain_steps)
-            icvf_ep_bonus = 0
-        
+                wandb.log({f"training/{decode[k]}": v}, step=i)
         
         if i >= FLAGS.start_training:
-            online_batch = replay_buffer.sample(
+            
+            online_batch = unfreeze(online_replay_buffer.sample(
                 int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
+            ))
+            # online_batch['rewards'] -= 1
+            offline_batch = offline_ds.sample(
+                    int(FLAGS.batch_size * FLAGS.offline_ratio * FLAGS.utd_ratio)
             )
+            N = offline_batch['observations'].shape[0]
+            offline_batch['observations'] = jax.image.resize(offline_batch['observations'], (N, 128, 128, 3), 'bilinear')
+            offline_batch['next_observations'] = jax.image.resize(offline_batch['next_observations'], (N, 128, 128, 3), 'bilinear')
+            if icvf_relabel:
+                bonus_rew_vf = icvf_multiplier * icvf_bonus(
+                    batch['observations']['image'],
+                    batch['next_observations']['image'])
+                offline_batch["rewards"] += np.array(bonus_rew_vf)
+                
+            offline_batch['observations'] = FrozenDict({'image': offline_batch['observations'][..., None]})
+            offline_batch['next_observations'] = FrozenDict({'image': offline_batch['next_observations'][..., None]})
             
-            batch = unfreeze(online_batch)
-            
-            if FLAGS.use_rnd and i > start_rnd:
-                bonus = rnd_multiplier * rnd.get_reward(freeze(online_batch))
-                rnd_ep_bonus += bonus.mean().item()
-                batch["rewards"] += np.array(bonus)
-            
+            batch = combine(offline_batch, online_batch)
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
-            
+
             if i % FLAGS.log_interval == 0:
                 for k, v in update_info.items():
-                    wandb.log({f"training/{k}": v}, step=i + FLAGS.pretrain_steps)
-        
+                    wandb.log({f"training/{k}": v}, step=i)
+
         if i % FLAGS.eval_interval == 0:
             eval_info = evaluate(
                 agent,
                 eval_env,
                 num_episodes=FLAGS.eval_episodes,
                 save_video=FLAGS.save_video,
-                vf=curried_icvf,
             )
-
             for k, v in eval_info.items():
-                wandb.log({f"evaluation/{k}": v}, step=i + FLAGS.pretrain_steps)
+                wandb.log({f"evaluation/{k}": v}, step=i)
 
-            if FLAGS.checkpoint_model:
-                try:
-                    checkpoints.save_checkpoint(
-                        chkpt_dir, agent, step=i, keep=20, overwrite=True
-                    )
-                except:
-                    print("Could not save model checkpoint.")
-
-            if i % 25000 == 0 and FLAGS.checkpoint_buffer:
-                try:
-                    with open(os.path.join(buffer_dir, f"buffer_data.pkl"), "wb") as f:
-                        pickle.dump(replay_buffer.dataset_dict, f, pickle.HIGHEST_PROTOCOL)
-                except:
-                    print("Could not save agent buffer.")
-
+            if FLAGS.save_dir is not None:
+                checkpoints.save_checkpoint(
+                    FLAGS.save_dir, target=agent, step=i, overwrite=True
+                )
 
 if __name__ == "__main__":
     app.run(main)

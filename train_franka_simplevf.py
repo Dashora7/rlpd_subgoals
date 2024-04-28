@@ -174,7 +174,7 @@ def main(_):
         vf_ep_bonus = 0
         # make ICVF shaper in this file. See if it's faster    
         from src import icvf_learner as learner
-        from src.icvf_networks import VFWithImage, SqueezedLayerNormMLP
+        from src.icvf_networks import VFWithImage, SqueezedLayerNormMLP, SimpleVF
         from jaxrl_m.vision import encoders
         from flax.serialization import from_state_dict
         
@@ -183,8 +183,13 @@ def main(_):
         params = vf_params['agent']
         conf = vf_params['config']
         hidden_dims = (256, 256)
-        vf_def = ensemblize(SqueezedLayerNormMLP, 2)(hidden_dims + (1,))
-        encoder_def = encoders['ViT-B16']()
+        
+        # vf_def = ensemblize(SqueezedLayerNormMLP, 2)(hidden_dims + (1,))
+        # encoder_def = encoders['ViT-B16']()
+        
+        vf_def = ensemblize(SimpleVF, 2)(hidden_dims)
+        encoder_def = encoders['atari']()
+        
         value_def = VFWithImage(encoder_def, vf_def)
         vf_agent = learner.create_learner(
             seed=FLAGS.seed, observations=np.ones((1, 128, 128, 3)),
@@ -243,6 +248,13 @@ def main(_):
             )
             loss = rnd_update_info['rnd_loss'].item()
             rnd_ep_loss += loss
+        
+        """if use_vf and i > start_vf:
+            bonus_rew_vf = vf_multiplier * vf_bonus(
+                observation['image'][None],
+                next_observation['image'][None])
+            reward += np.array(bonus_rew_vf)
+            vf_ep_bonus += bonus_rew_vf.item()"""
         
         replay_buffer.insert(
             dict(
