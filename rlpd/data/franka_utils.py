@@ -15,7 +15,8 @@ DATASETS = ["franka_microwave_ds",
             "microwave_custom_reset",
             "microwave-optonly-reset",
             "online_microwave_vf_ds",
-            "online_microwave_icvf_ds"]
+            "online_microwave_icvf_ds",
+            "dibya_micro_open"]
 
 SEOHONG_SETS = {
     "franka_microwave_ds": 0,
@@ -200,7 +201,7 @@ def get_franka_dataset_rlpd(datasets, percentages, v4=False, offline=True):
             datadict = np.load(file, allow_pickle=True).item()
             file.close()
         # split into train/val and configure reward transform
-        train_d, val_d = split_dict_contiguous(datadict, percentages[i], rews=True, actions=True, thresh=SEOHONG_SETS.get(dset))
+        train_d, val_d = split_dict_contiguous(datadict, percentages[i], rews=True, actions=True, thresh=None)
         master_train_set.append(train_d)
         master_val_set.append(val_d)
         

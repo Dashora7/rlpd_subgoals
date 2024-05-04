@@ -33,6 +33,7 @@ flags.DEFINE_integer("max_steps", int(5e5), "Number of training steps.")
 flags.DEFINE_integer(
     "start_training", int(5e3), "Number of training steps to start training."
 )
+flags.DEFINE_string('icvf_path', None, 'Path to the ICVF Model.')
 flags.DEFINE_boolean("tqdm", True, "Use tqdm progress bar.")
 flags.DEFINE_boolean("save_video", True, "Save videos during evaluation.")
 flags.DEFINE_string("save_dir", None, "Directory to save checkpoints.")
@@ -96,11 +97,11 @@ def main(_):
     import gym
     pixel_keys = ('image',)
     envname = "kitchen-" + env_name_alt + "-v0"
-    env = gym.make(envname)
+    env = gym.make(envname, control_mode='joint_velocity')
     env = RecordEpisodeStatistics(env, deque_size=1)
     env.seed(FLAGS.seed)
     
-    eval_env = gym.make(envname)
+    eval_env = gym.make(envname, control_mode='joint_velocity')
     eval_env = TimeLimit(eval_env)
     eval_env.seed(FLAGS.seed + 42)
 
@@ -110,8 +111,11 @@ def main(_):
     )
     online_replay_buffer.seed(FLAGS.seed)
     
+    #offline_ds, _ = franka_utils.get_franka_dataset_rlpd(
+    #    ["franka_hingecabinet_ds"], [1.0], v4=False, offline=True
+    #)
     offline_ds, _ = franka_utils.get_franka_dataset_rlpd(
-        ["franka_hingecabinet_ds"], [1.0], v4=False, offline=True
+        ["dibya_micro_open"], [1.0], v4=False, offline=True
     )
     example_batch = offline_ds.sample(2)
 
