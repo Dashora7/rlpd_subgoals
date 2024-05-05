@@ -21,7 +21,7 @@ from gym.wrappers import TimeLimit, FilterObservation, RecordEpisodeStatistics
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("project_name", "online-franka", "wandb project name.")
+flags.DEFINE_string("project_name", "online-mjrl", "wandb project name.")
 flags.DEFINE_string("env_name", "KitchenMicrowave-v0", "Environment name.")
 flags.DEFINE_float("offline_ratio", 0.5, "Offline ratio.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
@@ -64,6 +64,31 @@ def combine(one_dict, other_dict):
 
     return FrozenDict(combined)
 
+class MuJoCoPixelObs(gym.ObservationWrapper):
+    def __init__(self, env, width, height, camera_name, device_id=-1, depth=False, *args, **kwargs):
+        gym.ObservationWrapper.__init__(self, env)
+        img_obs = gym.spaces.Box(low=0., high=255., shape=(width, height, 3, 1))
+        self.observation_space = gym.spaces.Dict({'image': img_obs})
+        self.width = width
+        self.height = height
+        self.camera_name = camera_name
+        self.depth = depth
+        self.device_id = device_id
+    def get_image(self):
+        img = self.sim.render(width=self.width, height=self.height, depth=self.depth,
+                              camera_name=self.camera_name, device_id=self.device_id)
+        img = img[::-1,:,:]
+        return {'image': img[..., None]}
+    def observation(self, observation):
+        return self.get_image()
+    
+        
+class SparseRewardWrapper(gym.RewardWrapper):
+    def __init__(self, env):
+        self.env = env
+    def reward(self, reward):
+        return float(self.env.get_env_infos()['solved']) - 1
+
 
 def main(_):
     wandb.init(project=FLAGS.project_name, entity="dashora7")
@@ -88,20 +113,17 @@ def main(_):
     elif FLAGS.env_name == "KitchenHingeCabinetV0":
         envname = 'kitchen_ldoor_open-v3'
     
-    def get_img(environment):
-        img = environment.sim.render(
-            width=128, height=128, depth=False, camera_name="left_cap2", device_id=-1)
-        img = img[::-1,:,:]
-        print(img.shape,"IMAGE SHAPE")
-        return {'image', img[..., None]}
-    
     import gym
     pixel_keys = ('image',)
     env = gym.make(envname)
+    env = MuJoCoPixelObs(env, 128, 128, 'left_cap2', -1, False)
+    env = SparseRewardWrapper(env)
     env = RecordEpisodeStatistics(env, deque_size=1)
     env.seed(FLAGS.seed)
     
     eval_env = gym.make(envname)
+    eval_env = MuJoCoPixelObs(env, 128, 128, 'left_cap2', -1, False)
+    eval_env = SparseRewardWrapper(eval_env)
     eval_env = TimeLimit(eval_env)
     eval_env.seed(FLAGS.seed + 42)
 
@@ -129,7 +151,6 @@ def main(_):
     
     # Training
     observation, done = env.reset(), False
-    observation = get_img(env)
     print('Observation shape:', observation['image'].shape)
     
     for i in tqdm.tqdm(range(1, FLAGS.max_steps), smoothing=0.1, disable=not FLAGS.tqdm):
@@ -139,7 +160,6 @@ def main(_):
             action, agent = agent.sample_actions(observation)
         
         next_observation, reward, done, info = env.step(action)
-        next_observation = get_img(env)
         
         if not done or "TimeLimit.truncated" in info:
             mask = 1.0
@@ -160,7 +180,6 @@ def main(_):
 
         if done:
             observation, done = env.reset(), False
-            observation = get_img(env)
             for k, v in info["episode"].items():
                 decode = {"r": "return", "l": "length", "t": "time"}
                 wandb.log({f"training/{decode[k]}": v}, step=i)
@@ -171,7 +190,6 @@ def main(_):
                 int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
             ))
             
-            online_batch['rewards'] -= 1
             offline_batch = offline_ds.sample(
                     int(FLAGS.batch_size * FLAGS.offline_ratio * FLAGS.utd_ratio)
             )
