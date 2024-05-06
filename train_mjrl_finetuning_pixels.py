@@ -160,7 +160,7 @@ def main(_):
             action, agent = agent.sample_actions(observation)
         
         next_observation, reward, done, info = env.step(action)
-        
+
         if not done or "TimeLimit.truncated" in info:
             mask = 1.0
         else:
@@ -204,8 +204,9 @@ def main(_):
             if i % FLAGS.log_interval == 0:
                 for k, v in update_info.items():
                     wandb.log({f"training/{k}": v}, step=i)
-
+        
         if i % FLAGS.eval_interval == 0:
+            # print("evaluating at step", i, "Currently done?", done)
             eval_info = evaluate(
                 agent,
                 eval_env,
@@ -214,7 +215,9 @@ def main(_):
             )
             for k, v in eval_info.items():
                 wandb.log({f"evaluation/{k}": v}, step=i)
-
+            
+            observation, done = env.reset(), False
+            
             if FLAGS.save_dir is not None:
                 checkpoints.save_checkpoint(
                     FLAGS.save_dir, target=agent, step=i, overwrite=True
