@@ -8,7 +8,7 @@ from rlpd.wrappers.cog_video_wandb import COGWANDBVideo
 
 def evaluate(
     agent, env: gym.Env, num_episodes: int,
-    save_video: bool = False, vf=None, rnd = None
+    save_video: bool = False, vf=None, rnd=None
 ) -> Dict[str, float]:
     if save_video:
         env = COGWANDBVideo(env, name="eval_video", max_videos=1, vf=vf, rnd=rnd)
