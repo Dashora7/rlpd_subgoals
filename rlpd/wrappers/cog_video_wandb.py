@@ -15,8 +15,7 @@ class COGWANDBVideo(gym.Wrapper):
         render_kwargs={},
         max_videos: Optional[int] = None,
         vf = None, # pass it in curried with goal
-        rnd = None,
-        dibya=False
+        rnd = None
     ):
         super().__init__(env)
         self._name = name
@@ -134,8 +133,6 @@ class COGWANDBVideo(gym.Wrapper):
 
     def step(self, action: np.ndarray):
         obs, reward, done, info = super().step(action)
-        if self.dibya:
-            obs = self.get_img()
         self._add_frame(obs)
         if done and len(self._video) > 0:
             if self._max_videos is not None:
