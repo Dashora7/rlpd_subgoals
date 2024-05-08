@@ -179,7 +179,7 @@ def get_franka_dataset_simple(datasets, percentages, v4=False, offline=False):
     )
     return master_train_ds, master_val_ds
 
-def get_franka_dataset_rlpd(datasets, percentages, v4=False, offline=True):
+def get_franka_dataset_rlpd(datasets, percentages, v4=False, offline=True, brc=False):
     ROOT = "gs://rail-tpus-nitish-v3/franka/processed_data_resized"
     assert len(datasets) == len(percentages), "Invalid percentages provided"
     assert isinstance(datasets, list), "Invalid datasets provided"
@@ -188,6 +188,8 @@ def get_franka_dataset_rlpd(datasets, percentages, v4=False, offline=True):
     assert all([ds in DATASETS for ds in datasets]), "Invalid dataset provided"
     if v4:
         rootp = ROOT.replace('nitish-v3', 'nitish-v4')
+    elif offline and brc:
+        rootp = "/global/scratch/users/dashora7/franka_datasets"
     elif offline:
         rootp = "/nfs/kun2/users/dashora7/franka_datasets"
     else:

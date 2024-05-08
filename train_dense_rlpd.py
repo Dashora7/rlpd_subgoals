@@ -87,7 +87,7 @@ def main(_):
         env_name_alt = "microwave"
         goalname = "microwave"
         # max_path_length = 50
-        goalpath = "/home/dashora7/franka_misc_data/microwave_img.png"
+        goalpath = "/home/dashora7/franka_misc_data/dibya_custom_micro_goal.png"
     elif FLAGS.env_name == "KitchenSlideCabinetV0":
         env_name_alt = "slidecabinet"
         goalname = "slide cabinet"
@@ -155,7 +155,7 @@ def main(_):
         # value_def = ICVFViT(encoder_def, icvf_def)
         
         vf_def = ensemblize(MonolithicVF, 2)(hidden_dims)
-        encoder_def = encoders['atari']()
+        encoder_def = encoders['resnetv2-26-1-128']()
         value_def = ICVFWithEncoder(encoder_def, vf_def)
         
         icvf_agent = learner.create_learner(
