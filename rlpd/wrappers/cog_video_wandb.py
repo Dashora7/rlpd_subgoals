@@ -19,7 +19,6 @@ class COGWANDBVideo(gym.Wrapper):
     ):
         super().__init__(env)
         self._name = name
-        self.dibya = dibya
         self._pixel_hw = pixel_hw
         self._render_kwargs = render_kwargs
         self._max_videos = max_videos
