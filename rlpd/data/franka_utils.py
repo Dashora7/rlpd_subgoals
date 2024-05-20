@@ -47,9 +47,13 @@ def split_dict_contiguous(d, percent_to_keep, ratio=0.8, rews=False, actions=Fal
     train_partitions = partitions[:n_train]
     val_partitions = partitions[n_train:]
     
-    # Keep percent_to_keep of the data
-    train_partitions = train_partitions[:int(percent_to_keep * len(train_partitions))]
-    val_partitions = val_partitions[:int(percent_to_keep * len(val_partitions))]
+    # Keep percent_to_keep of the dataif percent_to_keep == -1:
+    if percent_to_keep == -1:
+        train_partitions = train_partitions[:1]
+        val_partitions = val_partitions[:1]
+    else:
+        train_partitions = train_partitions[:int(percent_to_keep * len(train_partitions))]
+        val_partitions = val_partitions[:int(percent_to_keep * len(val_partitions))]
     
     train_o_indxs = np.concatenate([part[:-1] for part in train_partitions])
     train_n_o_idxs = np.concatenate([part[1:] for part in train_partitions])

@@ -47,7 +47,6 @@ config_flags.DEFINE_config_file(
 
 def combine(one_dict, other_dict):
     combined = {}
-
     for k, v in one_dict.items():
         if isinstance(v, FrozenDict):
             if len(v) == 0:
@@ -61,9 +60,7 @@ def combine(one_dict, other_dict):
             tmp[0::2] = v
             tmp[1::2] = other_dict[k]
             combined[k] = tmp
-
     return FrozenDict(combined)
-
 
 def main(_):
     wandb.init(project=FLAGS.project_name, entity="dashora7")
@@ -97,11 +94,11 @@ def main(_):
     import gym
     pixel_keys = ('image',)
     envname = "kitchen-" + env_name_alt + "-v0"
-    env = gym.make(envname, control_mode='joint_velocity')
+    env = gym.make(envname)
     env = RecordEpisodeStatistics(env, deque_size=1)
     env.seed(FLAGS.seed)
     
-    eval_env = gym.make(envname, control_mode='joint_velocity')
+    eval_env = gym.make(envname)
     eval_env = TimeLimit(eval_env)
     eval_env.seed(FLAGS.seed + 42)
 
@@ -114,9 +111,11 @@ def main(_):
     #offline_ds, _ = franka_utils.get_franka_dataset_rlpd(
     #    ["franka_hingecabinet_ds"], [1.0], v4=False, offline=True
     #)
+    
     offline_ds, _ = franka_utils.get_franka_dataset_rlpd(
-        ["dibya_micro_open"], [1.0], v4=False, offline=True
+        ["franka_microwave_ds"], [-1], v4=False, offline=True
     )
+    print("SIZE OF OFFLINE DS", offline_ds.size)
     example_batch = offline_ds.sample(2)
 
     # Crashes on some setups if agent is created before replay buffer.
