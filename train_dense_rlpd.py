@@ -87,7 +87,7 @@ def main(_):
         env_name_alt = "microwave"
         goalname = "microwave"
         # max_path_length = 50
-        goalpath = "/home/dashora7/franka_misc_data/dibya_custom_micro_goal.png"
+        goalpath = "/home/dashora7/franka_misc_data/microwave_img.png"
     elif FLAGS.env_name == "KitchenSlideCabinetV0":
         env_name_alt = "slidecabinet"
         goalname = "slide cabinet"
@@ -100,11 +100,11 @@ def main(_):
     import gym
     pixel_keys = ('image',)
     envname = "kitchen-" + env_name_alt + "-v0"
-    env = gym.make(envname, control_mode='joint_velocity')
+    env = gym.make(envname)
     env = RecordEpisodeStatistics(env, deque_size=1)
     env.seed(FLAGS.seed)
     
-    eval_env = gym.make(envname, control_mode='joint_velocity')
+    eval_env = gym.make(envname)
     eval_env = TimeLimit(eval_env)
     eval_env.seed(FLAGS.seed + 42)
 
@@ -115,7 +115,7 @@ def main(_):
     online_replay_buffer.seed(FLAGS.seed)
     
     offline_ds, _ = franka_utils.get_franka_dataset_rlpd(
-        ["dibya_micro_open"], [1.0], v4=False, offline=True, brc=True
+        ["franka_microwave_ds"], [-1], v4=False, offline=True
     )
     example_batch = offline_ds.sample(2)
 
