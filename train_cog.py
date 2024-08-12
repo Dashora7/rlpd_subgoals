@@ -20,6 +20,7 @@ import pickle
 from jaxrl_m.networks import ensemblize
 import tensorflow as tf
 import time
+from PIL import Image
 
 ### cog imports ###
 import roboverse
@@ -28,13 +29,13 @@ import src.cog.utils as cog_utils
 import types
 
 ### cog imports ###
-
 import jax
 import jax.numpy as jnp
 
+
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("project_name", "online-cog", "wandb project name.")
+flags.DEFINE_string("project_name", "icvf-cog-rl", "wandb project name.")
 flags.DEFINE_string("env_name", "Widow250PickTray-v0", "Environment name.")
 flags.DEFINE_float("offline_ratio", 0.0, "Offline ratio.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
@@ -97,9 +98,12 @@ def main(_):
     use_offline_rnd = FLAGS.offline_rnd_path is not None
     
     envgoals = {
-        'pickplace': np.load('/home/dashora7/cog_misc_data/pickplace_goal_img.npy'),
+        # 'pickplace': np.load('/home/dashora7/cog_misc_data/pickplace_goal_img.npy'),
+        'pickplace': np.array(Image.open('/home/dashora7/cog_misc_data/pickplace_goal.png')),
         'closeddrawer': np.load('/home/dashora7/cog_misc_data/drawer_goal_img.npy')
     }
+    
+    
     for k, v in envgoals.items():
         envgoals[k] = jnp.expand_dims(
             jax.image.resize(v, (128, 128, 3), 'bilinear'), axis=0)
@@ -174,8 +178,16 @@ def main(_):
     )
     
     offline_ds, _ = cog_utils.get_cog_dataset_rlpd(
-        ["pickplace_task", "pickplace_prior"],
-        [1.0, 1.0], v4=False, offline=True
+        # ["pickplace_prior"],
+        ["pickplace_prior",
+        "DrawerOpenGrasp",
+        "drawer_task",
+        "closed_drawer_prior",
+        "blocked_drawer_1_prior",
+        "blocked_drawer_2_prior"],
+        [1.0, 1.0, 1.0, 1.0, 1.0, 1.0], v4=False, offline=True
+        #["pickplace_task", "pickplace_prior"],
+        #[1.0, 1.0], v4=False, offline=True
     )
     example_batch = offline_ds.sample(2)
     
@@ -204,17 +216,24 @@ def main(_):
         icvf_ep_bonus = 0
         # make ICVF shaper in this file. See if it's faster    
         from src import icvf_learner as learner
-        from src.icvf_networks import create_icvf, ICVFViT, SqueezedLayerNormMLP
+        from src.icvf_networks import create_icvf, ICVFViT, SqueezedLayerNormMLP, MonolithicVF, ICVFWithEncoder
         from jaxrl_m.vision import encoders
+        
         
         with tf.io.gfile.GFile(FLAGS.icvf_path, 'rb') as f:
             icvf_params = pickle.load(f)
         params = icvf_params['agent']
         conf = icvf_params['config']
         hidden_dims = (256, 256)
-        icvf_def = ensemblize(SqueezedLayerNormMLP, 2)(hidden_dims + (1,))
-        encoder_def = encoders['ViT-B16']()
-        value_def = ICVFViT(encoder_def, icvf_def)
+        
+        #icvf_def = ensemblize(SqueezedLayerNormMLP, 2)(hidden_dims + (1,))
+        #encoder_def = encoders['ViT-B16']()
+        #value_def = ICVFViT(encoder_def, icvf_def)
+        
+        vf_def = ensemblize(MonolithicVF, 2)(hidden_dims)
+        encoder_def = encoders['resnetv2-26-1-128']()
+        value_def = ICVFWithEncoder(encoder_def, vf_def)
+        
         icvf_agent = learner.create_learner(
             seed=FLAGS.seed, observations=np.ones((1, 128, 128, 3)),
             value_def=value_def, **conf)
@@ -279,6 +298,8 @@ def main(_):
             mask = 1.0
         else:
             mask = 0.0
+        # mask = 1.0
+        
         
         if FLAGS.use_rnd and i % rnd_update_freq == 0:
             rnd, rnd_update_info = rnd.update(
