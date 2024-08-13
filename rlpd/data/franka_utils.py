@@ -16,7 +16,15 @@ DATASETS = ["franka_microwave_ds",
             "microwave-optonly-reset",
             "online_microwave_vf_ds",
             "online_microwave_icvf_ds",
-            "dibya_micro_open"]
+            "dibya_micro_open",
+            "microwave-optimal-fs40-jvel",
+            "microwave-custom-failures-reset-jvel",
+            "slidedoor-failsonly-fs40-jvel",
+            "micro-failsonly-fs40-jvel",
+            "hinge-failsonly-fs40-jvel",
+            "hinge-failsonly-fs40-jvel-2",
+            "hinge-failsonly-fs40-jvel-retry"]
+
 
 SEOHONG_SETS = {
     "franka_microwave_ds": 0,
@@ -41,15 +49,78 @@ def get_franka_config():
 def split_dict_contiguous(d, percent_to_keep, ratio=0.8, rews=False, actions=False, thresh=None):
     terms = d['dones_float']
     stops = np.argwhere(terms).flatten().astype(int)
+    
+    partitions = np.split(np.arange(d['observations']['image'].shape[0]), terms.sum())
+    partitions_nonobs = np.split(np.arange(len(terms)), terms.sum())
+    
+    random.Random(42).shuffle(partitions)
+    random.Random(42).shuffle(partitions_nonobs)
+    
+    n_train = int(ratio * len(partitions))
+    train_partitions = partitions[:n_train]
+    val_partitions = partitions[n_train:]
+    
+    train_partitions_nonobs = partitions_nonobs[:n_train]
+    val_partitions_nonobs = partitions_nonobs[n_train:]
+    
+    # Keep percent_to_keep of the dataif percent_to_keep == -1:
+    if percent_to_keep == -1:
+        train_partitions = train_partitions[:1]
+        val_partitions = val_partitions[:1]
+        train_partitions_nonobs = train_partitions_nonobs[:1]
+        val_partitions_nonobs = val_partitions_nonobs[:1]
+    else:
+        train_partitions = train_partitions[:int(percent_to_keep * len(train_partitions))]
+        val_partitions = val_partitions[:int(percent_to_keep * len(val_partitions))]
+        train_partitions_nonobs = train_partitions_nonobs[:int(percent_to_keep * len(train_partitions_nonobs))]
+        val_partitions_nonobs = val_partitions_nonobs[:int(percent_to_keep * len(val_partitions_nonobs))]
+    
+    train_o_indxs = np.concatenate([part[:-1] for part in train_partitions])
+    train_n_o_idxs = np.concatenate([part[1:] for part in train_partitions])
+    val_o_indxs = np.concatenate([part[:-1] for part in val_partitions])
+    val_n_o_idxs = np.concatenate([part[1:] for part in val_partitions])
+    train_nonobs_indxs = np.concatenate(train_partitions_nonobs)
+    val_nonobs_indxs = np.concatenate(val_partitions_nonobs)
+    
+    train_dict = dict()
+    val_dict = dict()
+    
+    train_dict['observations'] = d['observations']['image'][train_o_indxs]
+    train_dict['next_observations'] = d['observations']['image'][train_n_o_idxs]
+    train_dict['dones_float'] = d['dones_float'][train_nonobs_indxs]
+    
+    val_dict['observations'] = d['observations']['image'][val_o_indxs]
+    val_dict['next_observations'] = d['observations']['image'][val_n_o_idxs]
+    val_dict['dones_float'] = d['dones_float'][val_nonobs_indxs]
+    
+    if rews:
+        if thresh is not None:
+            d['rewards'] = (d['rewards'] > thresh).astype(float)
+        train_dict['rewards'] = d['rewards'][train_nonobs_indxs]
+        val_dict['rewards'] = d['rewards'][val_nonobs_indxs]
+    if actions:
+        train_dict['actions'] = d['actions'][train_nonobs_indxs]
+        val_dict['actions'] = d['actions'][val_nonobs_indxs]
+    
+    return train_dict, val_dict
+
+
+def split_dict_contiguous_old(d, percent_to_keep, ratio=0.8, rews=False, actions=False, thresh=None):
+    terms = d['dones_float']
+    stops = np.argwhere(terms).flatten().astype(int)
     partitions = np.split(np.arange(len(terms)), stops + 1)[:-1]
     random.shuffle(partitions) # now shuffled
     n_train = int(ratio * len(partitions))
     train_partitions = partitions[:n_train]
     val_partitions = partitions[n_train:]
     
-    # Keep percent_to_keep of the data
-    train_partitions = train_partitions[:int(percent_to_keep * len(train_partitions))]
-    val_partitions = val_partitions[:int(percent_to_keep * len(val_partitions))]
+    # Keep percent_to_keep of the dataif percent_to_keep == -1:
+    if percent_to_keep == -1:
+        train_partitions = train_partitions[:1]
+        val_partitions = val_partitions[:1]
+    else:
+        train_partitions = train_partitions[:int(percent_to_keep * len(train_partitions))]
+        val_partitions = val_partitions[:int(percent_to_keep * len(val_partitions))] 
     
     train_o_indxs = np.concatenate([part[:-1] for part in train_partitions])
     train_n_o_idxs = np.concatenate([part[1:] for part in train_partitions])
@@ -114,7 +185,7 @@ def get_franka_dataset(datasets, percentages, v4=False, offline=False):
         next_observations=master_train_dict['next_observations'],
         dones_float=master_train_dict['dones_float'],
         actions=np.zeros_like(master_train_dict['dones_float']),
-        rewards=np.zeros_like(master_train_dict['dones_float']),
+        rewards=np.zeros_like(master_train_dict['dones_float']) - 1,
         masks=np.ones_like(master_train_dict['dones_float'])
     )
     master_val_ds = Dataset.create(
@@ -122,7 +193,7 @@ def get_franka_dataset(datasets, percentages, v4=False, offline=False):
         next_observations=master_val_dict['next_observations'],
         dones_float=master_val_dict['dones_float'],
         actions=np.zeros_like(master_val_dict['dones_float']),
-        rewards=np.zeros_like(master_val_dict['dones_float']),
+        rewards=np.zeros_like(master_val_dict['dones_float']) - 1,
         masks=np.ones_like(master_val_dict['dones_float'])
     )
     return master_train_ds, master_val_ds
@@ -218,8 +289,8 @@ def get_franka_dataset_rlpd(datasets, percentages, v4=False, offline=True, brc=F
         dones=master_train_dict['dones_float'],
         actions=master_train_dict['actions'],
         rewards=master_train_dict['rewards'] - 1,
-        masks=np.ones_like(master_train_dict['dones_float'])
-        # masks= 1 - master_train_dict['dones_float']
+        # masks=np.ones_like(master_train_dict['dones_float'])
+        masks= 1 - master_train_dict['dones_float']
     )
     master_val_ds = Dataset.create(
         observations=master_val_dict['observations'],
@@ -227,7 +298,7 @@ def get_franka_dataset_rlpd(datasets, percentages, v4=False, offline=True, brc=F
         dones=master_val_dict['dones_float'],
         actions=master_val_dict['actions'],
         rewards=master_val_dict['rewards'] - 1,
-        masks=np.ones_like(master_val_dict['dones_float'])
-        # masks=1 - master_val_dict['dones_float']
+        # masks=np.ones_like(master_val_dict['dones_float'])
+        masks=1 - master_val_dict['dones_float']
     )
     return master_train_ds, master_val_ds

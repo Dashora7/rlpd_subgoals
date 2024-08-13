@@ -22,7 +22,7 @@ from gym.wrappers import TimeLimit, FilterObservation, RecordEpisodeStatistics
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("project_name", "online-franka", "wandb project name.")
+flags.DEFINE_string("project_name", "final-online-franka", "wandb project name.")
 flags.DEFINE_string("env_name", "KitchenMicrowave-v0", "Environment name.")
 flags.DEFINE_float("offline_ratio", 0.5, "Offline ratio.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
@@ -86,25 +86,29 @@ def main(_):
     if FLAGS.env_name == "KitchenMicrowaveV0":
         env_name_alt = "microwave"
         goalname = "microwave"
+        goalpath = "/global/scratch/users/dashora7/misc_data/grasp.png" 
         # max_path_length = 50
-        goalpath = "/home/dashora7/franka_misc_data/dibya_custom_micro_goal.png"
+        # goalpath = "/global/scratch/users/dashora7/misc_data/dibya_custom_micro_goal.png" 
+        # goalpath = "/home/dashora7/franka_misc_data/dibya_custom_micro_goal.png"
     elif FLAGS.env_name == "KitchenSlideCabinetV0":
         env_name_alt = "slidecabinet"
         goalname = "slide cabinet"
+        goalpath = "/global/scratch/users/dashora7/misc_data/slide_opt.png" 
         #max_path_length = 50
     elif FLAGS.env_name == "KitchenHingeCabinetV0":
         env_name_alt = "hingecabinet"
+        goalpath = "/global/scratch/users/dashora7/misc_data/hinge_retry.png" 
         goalname = "hinge cabinet"
         #max_path_length = 50
 
     import gym
     pixel_keys = ('image',)
     envname = "kitchen-" + env_name_alt + "-v0"
-    env = gym.make(envname, control_mode='joint_velocity')
+    env = gym.make(envname)
     env = RecordEpisodeStatistics(env, deque_size=1)
     env.seed(FLAGS.seed)
     
-    eval_env = gym.make(envname, control_mode='joint_velocity')
+    eval_env = gym.make(envname)
     eval_env = TimeLimit(eval_env)
     eval_env.seed(FLAGS.seed + 42)
 
@@ -115,9 +119,15 @@ def main(_):
     online_replay_buffer.seed(FLAGS.seed)
     
     offline_ds, _ = franka_utils.get_franka_dataset_rlpd(
-        ["dibya_micro_open"], [1.0], v4=False, offline=True, brc=True
+        ["micro-failsonly-fs40-jvel"],
+        [1.0], v4=False, offline=True, brc=True
+        #"microwave-custom-failures-reset-jvel.npy"  
+        #"hinge-failsonly-fs40-jvel-retry"
+        #"slidedoor-failsonly-fs40-jvel",
+        #"micro-failsonly-fs40-jvel"],
+        #[1.0, 1.0, 1.0], v4=False, offline=True, brc=True
     )
-    example_batch = offline_ds.sample(2)
+    example_batch = offline_ds.sample(1)
 
     # Crashes on some setups if agent is created before replay buffer.
     kwargs = dict(FLAGS.config)
@@ -129,12 +139,12 @@ def main(_):
         pixel_keys=pixel_keys,
         **kwargs,
     )
-    
+    vf_obj = None 
+    icvf_ep_bonus = 0 
     if icvf_relabel:
         start_icvf = 0
         icvf_multiplier = 0.001 # for value
         # icvf_multiplier = 0.1 # for potential
-        icvf_ep_bonus = 0
         # make ICVF shaper in this file. See if it's faster    
         from src import icvf_learner as learner
         from src.icvf_networks import create_icvf, ICVFViT, SqueezedLayerNormMLP, MonolithicVF, ICVFWithEncoder
@@ -181,13 +191,13 @@ def main(_):
             else:
                 return val_to_sg
         icvf_bonus = jax.jit(icvf_bonus, static_argnums=(3,))
-        
+        vf_obj = lambda s, sp: icvf_bonus(s, sp, goal_img[None])
     
     # Training
     observation, done = env.reset(), False
     print('Observation shape:', observation['image'].shape)
     goal_img = np.array(Image.open(goalpath).resize((128, 128)))
-    
+
     for i in tqdm.tqdm(range(1, FLAGS.max_steps), smoothing=0.1, disable=not FLAGS.tqdm):
         if i < FLAGS.start_training:
             action = env.action_space.sample()
@@ -195,7 +205,8 @@ def main(_):
             action, agent = agent.sample_actions(observation)
         next_observation, reward, done, info = env.step(action)
 
-        if not done or "TimeLimit.truncated" in info:
+        #if not done or "TimeLimit.truncated" in info:
+        if True:
             mask = 1.0
         else:
             mask = 0.0
@@ -224,7 +235,9 @@ def main(_):
             for k, v in info["episode"].items():
                 decode = {"r": "return", "l": "length", "t": "time"}
                 wandb.log({f"training/{decode[k]}": v}, step=i)
-        
+            wandb.log({"training/icvf_bonus": icvf_ep_bonus}, step=i)
+            icvf_ep_bonus = 0
+
         if i >= FLAGS.start_training:
             # Get online batch
             online_batch = unfreeze(online_replay_buffer.sample(
@@ -250,6 +263,7 @@ def main(_):
             offline_batch['next_observations'] = FrozenDict({'image': offline_batch['next_observations'][..., None]})
             
             batch = combine(offline_batch, online_batch)
+            # batch = online_batch 
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
 
             if i % FLAGS.log_interval == 0:
@@ -262,6 +276,7 @@ def main(_):
                 eval_env,
                 num_episodes=FLAGS.eval_episodes,
                 save_video=FLAGS.save_video,
+                vf=vf_obj
             )
             for k, v in eval_info.items():
                 wandb.log({f"evaluation/{k}": v}, step=i)
