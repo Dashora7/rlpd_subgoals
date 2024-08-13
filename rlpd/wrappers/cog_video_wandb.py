@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import wandb
 from matplotlib.backends.backend_agg import FigureCanvasAgg
+import jax
 
 class COGWANDBVideo(gym.Wrapper):
     def __init__(
@@ -70,6 +71,7 @@ class COGWANDBVideo(gym.Wrapper):
             s = self._video[-1][None, ..., None]
             self._plotdata.append(self.vf(s, s))
             line.set_data(np.arange(len(self._plotdata)), self._plotdata)
+            s = jax.image.resize(s, (1, 48, 48, 3, 1), method='bilinear')
             self._rndplotdata.append(self.rnd(s))
             rndline.set_data(np.arange(len(self._rndplotdata)), self._rndplotdata)
             npimg = mplfig_to_npimage(plt.gcf())
@@ -94,6 +96,7 @@ class COGWANDBVideo(gym.Wrapper):
             ax1.set_xlim(0, 100)
             ax1.set_ylim(-30, 2)
             s = self._video[-1][None, ..., None]
+            s = jax.image.resize(s, (1, 48, 48, 3, 1), method='bilinear')
             self._plotdata.append(self.rnd(s))
             line.set_data(np.arange(len(self._plotdata)), self._plotdata)
             npimg = mplfig_to_npimage(plt.gcf())

@@ -47,7 +47,6 @@ config_flags.DEFINE_config_file(
 
 def combine(one_dict, other_dict):
     combined = {}
-
     for k, v in one_dict.items():
         if isinstance(v, FrozenDict):
             if len(v) == 0:
@@ -61,9 +60,7 @@ def combine(one_dict, other_dict):
             tmp[0::2] = v
             tmp[1::2] = other_dict[k]
             combined[k] = tmp
-
     return FrozenDict(combined)
-
 
 def main(_):
     wandb.init(project=FLAGS.project_name, entity="dashora7")

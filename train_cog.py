@@ -8,6 +8,7 @@ from ml_collections import config_flags
 from flax.training import checkpoints
 
 import wandb
+from flax.serialization import from_state_dict
 from rlpd.data import MemoryEfficientReplayBuffer, ReplayBuffer
 from rlpd.evaluation import evaluate
 from rlpd.wrappers import wrap_pixels
@@ -19,21 +20,22 @@ import pickle
 from jaxrl_m.networks import ensemblize
 import tensorflow as tf
 import time
+from PIL import Image
 
 ### cog imports ###
 import roboverse
 from gym.wrappers import TimeLimit, FilterObservation, RecordEpisodeStatistics
-from rlpd.data.cog_datasets import COGDataset
+import src.cog.utils as cog_utils
 import types
 
 ### cog imports ###
-
 import jax
 import jax.numpy as jnp
 
+
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("project_name", "online-cog", "wandb project name.")
+flags.DEFINE_string("project_name", "icvf-cog-rl", "wandb project name.")
 flags.DEFINE_string("env_name", "Widow250PickTray-v0", "Environment name.")
 flags.DEFINE_float("offline_ratio", 0.0, "Offline ratio.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
@@ -54,7 +56,7 @@ flags.DEFINE_string("icvf_path", None, "model path.")
 flags.DEFINE_boolean("use_rnd", False, "Use Random Network Distillation")
 flags.DEFINE_boolean("save_video", True, "Save videos")
 flags.DEFINE_integer("utd_ratio", 1, "Update to data ratio.")
-
+flags.DEFINE_string("offline_rnd_path", None, "Path to offline RND model for data support constraint.")
 config_flags.DEFINE_config_file(
     "config",
     "configs/rlpd_pixels_config.py",
@@ -93,11 +95,15 @@ def main(_):
     use_icvf = FLAGS.icvf_path is not None
     wandb.init(project=FLAGS.project_name, entity="dashora7")
     wandb.config.update(FLAGS)
+    use_offline_rnd = FLAGS.offline_rnd_path is not None
     
     envgoals = {
-        'pickplace': np.load('/home/dashora7/cog_misc_data/pickplace_goal_img.npy'),
+        # 'pickplace': np.load('/home/dashora7/cog_misc_data/pickplace_goal_img.npy'),
+        'pickplace': np.array(Image.open('/home/dashora7/cog_misc_data/pickplace_goal.png')),
         'closeddrawer': np.load('/home/dashora7/cog_misc_data/drawer_goal_img.npy')
     }
+    
+    
     for k, v in envgoals.items():
         envgoals[k] = jnp.expand_dims(
             jax.image.resize(v, (128, 128, 3), 'bilinear'), axis=0)
@@ -152,39 +158,10 @@ def main(_):
     eval_env.seed(FLAGS.seed + 42)
     
     goal_img = envgoals[env_name_alt]
-
-    if FLAGS.offline_ratio > 0:
-        dataset_path = os.path.join("data", env_name_alt)
-        print("Data Path:", dataset_path)
-        np_rng = np.random.default_rng(FLAGS.seed)
-        ds = COGDataset(
-            env=env,
-            dataset_path=dataset_path,
-            capacity=300000,
-            subsample_ratio=FLAGS.dataset_subsample_ratio,
-            np_rng=np_rng,
-        )
-        ds.seed(FLAGS.seed)
-        ds_minr = ds.dataset_dict["rewards"][: len(ds)].min()
-        assert -10 < ds_minr < 10, "maybe sampling reward outside of buffer range"    
-        ds_iterator = ds.get_iterator(
-            sample_args={
-                "batch_size": int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio),
-                "pack_obs_and_next_obs": True,
-            }
-        )
-
     replay_buffer = MemoryEfficientReplayBuffer(
         env.observation_space, env.action_space, FLAGS.max_steps
     )
-    replay_buffer_iterator = replay_buffer.get_iterator(
-        sample_args={
-            "batch_size": int(
-                FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio)
-            ),
-            "pack_obs_and_next_obs": True,
-        }
-    )
+    
     replay_buffer.seed(FLAGS.seed)
 
     ########### MODELS ###########
@@ -199,6 +176,21 @@ def main(_):
         pixel_keys=pixel_keys,
         **kwargs,
     )
+    
+    offline_ds, _ = cog_utils.get_cog_dataset_rlpd(
+        # ["pickplace_prior"],
+        ["pickplace_prior",
+        "DrawerOpenGrasp",
+        "drawer_task",
+        "closed_drawer_prior",
+        "blocked_drawer_1_prior",
+        "blocked_drawer_2_prior"],
+        [1.0, 1.0, 1.0, 1.0, 1.0, 1.0], v4=False, offline=True
+        #["pickplace_task", "pickplace_prior"],
+        #[1.0, 1.0], v4=False, offline=True
+    )
+    example_batch = offline_ds.sample(2)
+    
     
     # Setup RND Parameters
     if FLAGS.use_rnd:
@@ -217,25 +209,31 @@ def main(_):
         rnd_ep_loss = 0
         rnd_multiplier = 1.0 # float(1 / 10)
     
+    icvf_multiplier = 0.001 # for value
+    # icvf_multiplier = 0.1 # for potential
     if use_icvf:
         start_icvf = 0
-        icvf_multiplier = 0.001 # for value
-        # icvf_multiplier = 0.1 # for potential
         icvf_ep_bonus = 0
         # make ICVF shaper in this file. See if it's faster    
         from src import icvf_learner as learner
-        from src.icvf_networks import create_icvf, ICVFViT, SqueezedLayerNormMLP
+        from src.icvf_networks import create_icvf, ICVFViT, SqueezedLayerNormMLP, MonolithicVF, ICVFWithEncoder
         from jaxrl_m.vision import encoders
-        from flax.serialization import from_state_dict
+        
         
         with tf.io.gfile.GFile(FLAGS.icvf_path, 'rb') as f:
             icvf_params = pickle.load(f)
         params = icvf_params['agent']
         conf = icvf_params['config']
         hidden_dims = (256, 256)
-        icvf_def = ensemblize(SqueezedLayerNormMLP, 2)(hidden_dims + (1,))
-        encoder_def = encoders['ViT-B16']()
-        value_def = ICVFViT(encoder_def, icvf_def)
+        
+        #icvf_def = ensemblize(SqueezedLayerNormMLP, 2)(hidden_dims + (1,))
+        #encoder_def = encoders['ViT-B16']()
+        #value_def = ICVFViT(encoder_def, icvf_def)
+        
+        vf_def = ensemblize(MonolithicVF, 2)(hidden_dims)
+        encoder_def = encoders['resnetv2-26-1-128']()
+        value_def = ICVFWithEncoder(encoder_def, vf_def)
+        
         icvf_agent = learner.create_learner(
             seed=FLAGS.seed, observations=np.ones((1, 128, 128, 3)),
             value_def=value_def, **conf)
@@ -258,7 +256,34 @@ def main(_):
                 return val_to_sg
         icvf_bonus = jax.jit(icvf_bonus, static_argnums=(3,))
         curried_icvf = lambda s, s_prime: icvf_bonus(s, s_prime, goal_img)
+    else:
+        curried_icvf = None
+    
+    if use_offline_rnd:
+        off_rnd_multiplier = 10.0
+        off_rnd_ep_penalty = 0
+        kwargs = dict(FLAGS.rnd_config)
+        model_cls = kwargs.pop("model_cls")
+        off_rnd = globals()[model_cls].create(
+            FLAGS.seed + 123,
+            env.observation_space,
+            env.action_space,
+            pixel_keys=pixel_keys,
+            **kwargs,
+        )
+        with tf.io.gfile.GFile(FLAGS.offline_rnd_path, 'rb') as f:
+            rnd_params = pickle.load(f)
+        off_rnd = from_state_dict(off_rnd, rnd_params)
         
+        def rnd_viz(s):
+            assert len(s.shape) == 5
+            N = s.shape[0]
+            dic = freeze({"observations": {'pixels': s}})
+            return -1 * off_rnd.get_reward(dic) * (off_rnd_multiplier / icvf_multiplier) # make same scale for viz
+        
+    else:
+        rnd_viz = None
+    
     # Training
     observation, done = env.reset(), False
 
@@ -273,6 +298,8 @@ def main(_):
             mask = 1.0
         else:
             mask = 0.0
+        # mask = 1.0
+        
         
         if FLAGS.use_rnd and i % rnd_update_freq == 0:
             rnd, rnd_update_info = rnd.update(
@@ -321,7 +348,11 @@ def main(_):
                     {f"training/rnd_avg_loss": rnd_ep_loss / info["episode"]['l']},
                     step=i + FLAGS.pretrain_steps)
                 rnd_ep_loss = 0
-            
+            if use_offline_rnd:
+                wandb.log(
+                    {f"training/off_rnd_avg_penalty": off_rnd_ep_penalty / info["episode"]['l']},
+                    step=i + FLAGS.pretrain_steps)
+                off_rnd_ep_penalty = 0
             if use_icvf:
                 wandb.log(
                     {f"training/icvf_avg_bonus": icvf_ep_bonus / info["episode"]['l']},
@@ -333,36 +364,37 @@ def main(_):
             online_batch = replay_buffer.sample(
                 int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
             )
+            batch = unfreeze(online_batch)
+            batch['rewards'] -= 1
             
-            if FLAGS.offline_ratio > 0.0:  
-                offline_batch = ds.sample(
-                    int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio)
+            if FLAGS.offline_ratio > 0:
+                offline_batch = offline_ds.sample(
+                    int(FLAGS.batch_size * FLAGS.offline_ratio * FLAGS.utd_ratio)
                 )
-                batch = combine(offline_batch, online_batch)
-            else:
-                batch = unfreeze(online_batch)
+                N = offline_batch['observations'].shape[0]
+                offline_batch['observations'] = jax.image.resize(offline_batch['observations'], (N, 48, 48, 3), 'bilinear')
+                offline_batch['next_observations'] = jax.image.resize(offline_batch['next_observations'], (N, 48, 48, 3), 'bilinear')
+                offline_batch['observations'] = FrozenDict({'pixels': offline_batch['observations'][..., None]})
+                offline_batch['next_observations'] = FrozenDict({'pixels': offline_batch['next_observations'][..., None]})
+                
+                batch = combine(offline_batch, batch)
             
             if FLAGS.use_rnd and i > start_rnd:
                 bonus = rnd_multiplier * rnd.get_reward(freeze(online_batch))
                 rnd_ep_bonus += bonus.mean().item()
                 batch["rewards"] += np.array(bonus)
-             
-            """if use_icvf and i > start_icvf:
-                # print("starting icvf pass")
-                # t = time.time()
-                goals = goal_img.repeat(
-                    batch['observations']['pixels'].shape[0], axis=0)
-                bonus_rew_icvf = icvf_multiplier * icvf_bonus(
-                    batch['observations']['pixels'], batch['next_observations']['pixels'], goals)
-                icvf_ep_bonus += bonus_rew_icvf.mean().item()
-                batch["rewards"] += np.array(bonus_rew_icvf)
-                # print("time taken for vit pass:", time.time() - t)"""
+            
+            if use_offline_rnd:
+                bonus = off_rnd_multiplier * off_rnd.get_reward(freeze(online_batch))
+                off_rnd_ep_penalty += -1 * bonus.mean().item()
+                batch["rewards"] += -1 * np.array(bonus)
             
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
             
             if i % FLAGS.log_interval == 0:
                 for k, v in update_info.items():
                     wandb.log({f"training/{k}": v}, step=i + FLAGS.pretrain_steps)
+            
         if i % FLAGS.eval_interval == 0:
             eval_info = evaluate(
                 agent,
@@ -370,6 +402,7 @@ def main(_):
                 num_episodes=FLAGS.eval_episodes,
                 save_video=FLAGS.save_video,
                 vf=curried_icvf,
+                rnd=rnd_viz,
             )
 
             for k, v in eval_info.items():
