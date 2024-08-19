@@ -99,8 +99,8 @@ def main(_):
     
     envgoals = {
         # 'pickplace': np.load('/home/dashora7/cog_misc_data/pickplace_goal_img.npy'),
-        'pickplace': np.array(Image.open('/home/dashora7/cog_misc_data/pickplace_goal.png')),
-        'closeddrawer': np.load('/home/dashora7/cog_misc_data/drawer_goal_img.npy')
+        'pickplace': np.array(Image.open('/global/home/users/dashora7/cog_misc_data/pickplace_goal.png')),
+        # 'closeddrawer': np.load('/global/home/users/dashora7/cog_misc_data/drawer_goal_img.npy')
     }
     
     
@@ -178,14 +178,15 @@ def main(_):
     )
     
     offline_ds, _ = cog_utils.get_cog_dataset_rlpd(
-        # ["pickplace_prior"],
-        ["pickplace_prior",
-        "DrawerOpenGrasp",
-        "drawer_task",
-        "closed_drawer_prior",
-        "blocked_drawer_1_prior",
-        "blocked_drawer_2_prior"],
-        [1.0, 1.0, 1.0, 1.0, 1.0, 1.0], v4=False, offline=True
+        ["pickplace_prior"],
+        #["pickplace_prior",
+        #"DrawerOpenGrasp",
+        #"drawer_task",
+        #"closed_drawer_prior",
+        #"blocked_drawer_1_prior",
+        #"blocked_drawer_2_prior"],
+        [1.0], v4=False, offline=True, brc=True
+        # [1.0, 1.0, 1.0, 1.0, 1.0, 1.0], v4=False, offline=True, brc=True
         #["pickplace_task", "pickplace_prior"],
         #[1.0, 1.0], v4=False, offline=True
     )
